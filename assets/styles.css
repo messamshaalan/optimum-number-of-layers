@@ -1,0 +1,403 @@
+/* ============================================================
+   LayerOptimum Pro — Professional Dark Theme
+   ============================================================ */
+
+:root {
+  --bg-primary:    #0a0e1a;
+  --bg-secondary:  #111827;
+  --bg-panel:      #161e2e;
+  --bg-card:       #1a2332;
+  --border:        #2d3a4f;
+  --border-light:  #374151;
+  --text-primary:  #e2e8f0;
+  --text-secondary:#94a3b8;
+  --text-muted:    #64748b;
+  --accent-blue:   #3b82f6;
+  --accent-green:  #10b981;
+  --accent-amber:  #f59e0b;
+  --accent-red:    #ef4444;
+  --accent-purple: #8b5cf6;
+  --gold:          #ffd700;
+}
+
+/* ---------- Global reset ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  background-color: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  font-family: 'Segoe UI', 'Inter', sans-serif;
+  font-size: 13px;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+/* ---------- Scrollbar ---------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+/* ---------- Navbar ---------- */
+.navbar-custom {
+  background: linear-gradient(90deg, #0d1829 0%, #0f2040 50%, #0d1829 100%) !important;
+  border-bottom: 2px solid var(--accent-blue);
+  padding: 0 18px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 2px 12px rgba(59,130,246,0.18);
+}
+
+.navbar-brand-text {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-primary) !important;
+}
+
+.navbar-brand-text span {
+  color: var(--accent-amber);
+}
+
+.navbar-subtitle {
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  background-color: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  min-height: calc(100vh - 52px);
+  padding: 12px 8px;
+  position: sticky;
+  top: 52px;
+  overflow-y: auto;
+  max-height: calc(100vh - 52px);
+}
+
+.sidebar-section {
+  margin-bottom: 18px;
+}
+
+.sidebar-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent-amber);
+  padding: 0 4px 6px 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* ---------- Result cards in sidebar ---------- */
+.result-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.result-metric {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.result-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--gold);
+  line-height: 1.1;
+}
+
+.result-subvalue {
+  font-size: 10px;
+  color: var(--accent-green);
+}
+
+/* ---------- Main content ---------- */
+.main-content {
+  background-color: var(--bg-primary);
+  padding: 0;
+  min-height: calc(100vh - 52px);
+}
+
+/* ---------- Tabs ---------- */
+.nav-tabs {
+  background: var(--bg-panel) !important;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 6px 12px 0 12px;
+  display: flex;
+  gap: 2px;
+}
+
+.nav-tabs .nav-link {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 4px 4px 0 0 !important;
+  color: var(--text-secondary) !important;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  padding: 6px 14px !important;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.nav-tabs .nav-link:hover {
+  color: var(--text-primary) !important;
+  background: rgba(59,130,246,0.08) !important;
+  border-color: var(--border) !important;
+}
+
+.nav-tabs .nav-link.active {
+  background: var(--bg-secondary) !important;
+  border-color: var(--accent-blue) var(--border) transparent !important;
+  border-top-width: 2px !important;
+  color: var(--accent-blue) !important;
+  font-weight: 600;
+}
+
+.tab-content {
+  background: var(--bg-primary) !important;
+  padding: 12px;
+}
+
+/* ---------- Dropdowns ---------- */
+.Select-control,
+.Select-menu-outer {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border) !important;
+  color: var(--text-primary) !important;
+}
+
+.Select-placeholder,
+.Select-value-label,
+.Select-input input {
+  color: var(--text-primary) !important;
+}
+
+.Select-option {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+.Select-option:hover, .Select-option.is-focused {
+  background: var(--border) !important;
+}
+.Select-option.is-selected {
+  background: var(--accent-blue) !important;
+}
+
+/* VirtualizedSelect / Dash dropdown override */
+.dash-dropdown .Select .Select-control {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 5px;
+  min-height: 32px;
+}
+
+/* ---------- Sliders ---------- */
+.rc-slider-track { background-color: var(--accent-blue) !important; }
+.rc-slider-handle {
+  border-color: var(--accent-blue) !important;
+  background: var(--accent-blue) !important;
+}
+.rc-slider-rail { background-color: var(--border) !important; }
+
+/* ---------- Buttons ---------- */
+.btn-tool {
+  background: transparent;
+  border: 1px solid var(--accent-blue);
+  color: var(--accent-blue);
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  width: 100%;
+  margin-bottom: 5px;
+}
+.btn-tool:hover {
+  background: var(--accent-blue);
+  color: white;
+}
+.btn-tool-green {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+}
+.btn-tool-green:hover {
+  background: var(--accent-green);
+  color: #000;
+}
+.btn-tool-amber {
+  border-color: var(--accent-amber);
+  color: var(--accent-amber);
+}
+.btn-tool-amber:hover {
+  background: var(--accent-amber);
+  color: #000;
+}
+
+/* ---------- Graph containers ---------- */
+.graph-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.graph-header {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-amber);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* ---------- Status bar ---------- */
+.status-bar {
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  padding: 4px 18px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 24px;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+}
+
+.status-item { display: flex; align-items: center; gap: 5px; }
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+}
+
+/* ---------- Checklist / Radio ---------- */
+.form-check-label { color: var(--text-secondary) !important; font-size: 11px; }
+.form-check-input:checked {
+  background-color: var(--accent-blue) !important;
+  border-color: var(--accent-blue) !important;
+}
+
+/* ---------- Loading overlay ---------- */
+._dash-loading {
+  background: rgba(10,14,26,0.75) !important;
+}
+._dash-loading-callback {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 4px;
+  color: var(--accent-blue) !important;
+}
+
+/* ---------- Upload area ---------- */
+.upload-area {
+  border: 2px dashed var(--border) !important;
+  border-radius: 6px;
+  padding: 12px !important;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text-secondary) !important;
+  background: var(--bg-card) !important;
+  transition: all 0.15s;
+  font-size: 11px;
+}
+.upload-area:hover {
+  border-color: var(--accent-blue) !important;
+  color: var(--accent-blue) !important;
+}
+
+/* ---------- Tooltip / Info badge ---------- */
+.info-badge {
+  background: var(--border);
+  color: var(--text-secondary);
+  border-radius: 50%;
+  width: 14px; height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  cursor: help;
+  margin-left: 4px;
+}
+
+/* ---------- Range / input ---------- */
+.dcc-slider .rc-slider { padding: 4px 0; }
+input[type='number'] {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  width: 100%;
+}
+input[type='number']:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+/* ---------- Facies legend ---------- */
+.facies-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.facies-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.facies-swatch {
+  width: 12px; height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ---------- Miscellaneous ---------- */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 10px 0;
+}
+
+.small-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+  display: block;
+}
+
+/* Bootstrap overrides */
+.card { background: var(--bg-card) !important; border-color: var(--border) !important; }
+.card-header { background: var(--bg-panel) !important; border-color: var(--border) !important; }
+.modal-content { background: var(--bg-secondary) !important; border-color: var(--border) !important; }
+.modal-header { border-color: var(--border) !important; }
+.table { color: var(--text-primary) !important; }
+.table td, .table th { border-color: var(--border) !important; }
+
+/* Remove white Dash background */
+#react-entry-point, #_dash-app-content { background: var(--bg-primary) !important; }
