@@ -1,6 +1,10 @@
 """LayerOptimum Pro — NiceGUI + ECharts + Plotly interface (v3.0)."""
 
-import copy, io, csv, lasio
+import copy, io, csv
+try:
+    import lasio
+except ImportError:
+    lasio = None
 import numpy as np
 import pandas as pd
 from nicegui import ui
@@ -525,6 +529,8 @@ def index():
             ui.html('<span class="s-label">Upload LAS</span>')
             def _on_upload_las(e):
                 try:
+                    if lasio is None:
+                        las_lbl.set_text('Error: lasio not installed'); return
                     las = lasio.read(io.StringIO(e.content.read().decode('utf-8', errors='replace')))
                     df  = las.df().reset_index()
                     df.columns = [c.upper() for c in df.columns]

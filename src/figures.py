@@ -844,18 +844,8 @@ def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
             zsmooth=False,
             showscale=False,
             hoverinfo='skip',
+            name=label,
         ), row=1, col=ci)
-        # property name annotation over the strip
-        fig.add_annotation(
-            text=f'<b>{label}</b>',
-            xref=f'x{(ci-1)*2 + 1 if ci > 1 else 1} domain' if False else 'paper',
-            yref='paper',
-            x=sum(col_widths[:ci]) + col_widths[ci] / 2,
-            y=1.02,
-            showarrow=False,
-            font=dict(color=AMBER, size=10),
-            xanchor='center', yanchor='bottom',
-        )
         fig.update_xaxes(showticklabels=False, showgrid=False,
                          zeroline=False, range=[0, 1], row=1, col=ci)
 
