@@ -1012,12 +1012,13 @@ def index():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    import os
     ui.run(
-        host='127.0.0.1',
-        port=8060,
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 8060)),
         title='LayerOptimum Pro',
         dark=True,
         reload=False,
-        show=True,
+        show=False,
         favicon='⛽',
     )
