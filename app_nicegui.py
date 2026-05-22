@@ -23,7 +23,7 @@ from src.figures import (
 )
 from src.echarts import (
     variogram_echart, layer_metric_echart, crossplot_echart,
-    heterogeneity_echart, grid_search_heatmap, stats_rows,
+    heterogeneity_echart, grid_search_heatmap, stats_rows, zone_thickness_echart,
     BLUE, GREEN, AMBER, PURPLE, GOLD, RED, CYAN, BG, PANEL, BORDER, TEXT, TEXT2,
 )
 from src.synthetic import FACIES_NAMES as SYN_FACIES_NAMES
@@ -38,7 +38,6 @@ VARIO_PROPS = [
     ('PHIE', BLUE),
     ('PERM', AMBER),
     ('SW',   CYAN),
-    ('NTG',  GREEN),
 ]
 VARIO_PROP_KEYS = [p[0] for p in VARIO_PROPS]
 
@@ -179,9 +178,21 @@ def index():
                 f"Zone thickness: {thick:.1f} m  |  Range: {res['range']:.1f} m  |  "
                 f"Sill: {res['sill']:.5f}  |  Nugget: {res['nugget']:.5f}  →  Min layers: {rec_n}")
 
+    def upd_thickness_chart():
+        thicknesses = [_zone_thickness(wn, S['zone']) for wn in WELL_NAMES]
+        _set_echart(charts['vario_thick'],
+                    zone_thickness_echart(list(WELL_NAMES), thicknesses, S['zone']))
+        avg_t = float(np.mean(thicknesses)) if thicknesses else 0.0
+        if 'vario_lbl_thick' in labels:
+            labels['vario_lbl_thick'].set_text(
+                f"Zone: {S['zone'].replace('_',' ')}  |  "
+                f"Avg: {avg_t:.1f} m  |  "
+                f"Min: {min(thicknesses):.1f} m  |  Max: {max(thicknesses):.1f} m")
+
     def upd_vario():
         for prop in VARIO_PROP_KEYS:
             upd_vario_panel(prop)
+        upd_thickness_chart()
 
     def upd_layer():
         df_z = _combined_zone(S['wells'], S['zone'])
@@ -239,16 +250,18 @@ def index():
             labels['thick_lbl'].set_text(f"Zone thickness: {zone_thick:.1f} m")
 
     def upd_upscaled():
+        wtops = TOPS[TOPS['WELL'] == S['log_well']]
         if S['all_zones_up']:
             _set_plotly(charts['upscaled'],
                         petrel_upscaled_allzones(
                             WELLS, RESERVOIR_ZONES,
                             {z: S['n_layers'] for z in RESERVOIR_ZONES},
-                            S['log_well']))
+                            S['log_well'], tops_df=wtops))
         else:
             df_z = _zone_df(S['log_well'], S['zone'])
             _set_plotly(charts['upscaled'],
-                        petrel_upscaled_figure(df_z, S['n_layers'], S['zone']))
+                        petrel_upscaled_figure(df_z, S['n_layers'], S['zone'],
+                                               tops_df=wtops))
 
     def upd_stats():
         all_res = _run_all_zones(S['wells'], S['max_layers'])
@@ -723,9 +736,8 @@ def index():
                     for w in [xp_x, xp_y, xp_col, xp_zf]:
                         w.on_value_change(_on_xp)
                 with ui.element('div').classes('geo-card'):
-                    df_all_init = _all_df(list(WELL_NAMES))
                     charts['xplot'] = ui.echart(
-                        crossplot_echart(df_all_init, 'PHIE', 'PERM', 'FACIES')
+                        {'backgroundColor': BG, 'series': []}
                     ).classes('w-full').style('height:580px')
 
             # ── Variogram ─────────────────────────────────────────────────────
@@ -795,6 +807,15 @@ def index():
                                 'nugget': r0['nugget'], 'sill': r0['sill'],
                                 'range_': r0['range'], 'manual': False}
 
+                    # ── Zone Thickness per Well (4th panel — replaces NTG) ─────
+                    with ui.element('div').classes('geo-card'):
+                        ui.html('<div class="geo-header">Zone Thickness per Well</div>')
+                        charts['vario_thick'] = ui.echart(
+                            {'backgroundColor': BG, 'series': []}
+                        ).classes('w-full').style('height:280px')
+                        labels['vario_lbl_thick'] = ui.label('').classes(
+                            'text-[10px] text-cyan-400 px-2 pb-1')
+
             # ── Layer Optimisation ────────────────────────────────────────────
             with ui.tab_panel('layer'):
                 # Target % info strip
@@ -854,9 +875,11 @@ def index():
                         'text-[11px] text-gray-300')
 
                 with ui.element('div').classes('geo-card'):
-                    df_z0 = _zone_df(WELL_NAMES[0], RESERVOIR_ZONES[-1])
+                    df_z0   = _zone_df(WELL_NAMES[0], RESERVOIR_ZONES[-1])
+                    tops_z0 = TOPS[TOPS['WELL'] == WELL_NAMES[0]]
                     charts['upscaled'] = ui.plotly(
-                        petrel_upscaled_figure(df_z0, 10, RESERVOIR_ZONES[-1])
+                        petrel_upscaled_figure(df_z0, 10, RESERVOIR_ZONES[-1],
+                                               tops_df=tops_z0)
                     ).classes('w-full').style('height:720px')
 
             # ── Statistics ────────────────────────────────────────────────────
@@ -922,9 +945,10 @@ def index():
             ui.label('LayerOptimum Pro v3.0').classes('text-[10px] text-gray-600')
 
     # ── Deferred initial population (gives browser time to init ECharts) ──────
+    ui.timer(0.4, upd_xplot,     once=True)
     ui.timer(0.6, upd_layer,     once=True)
     ui.timer(1.2, upd_stats,     once=True)
-    ui.timer(0.4, upd_vario,     once=True)
+    ui.timer(0.8, upd_vario,     once=True)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

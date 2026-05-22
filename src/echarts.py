@@ -64,12 +64,15 @@ def variogram_echart(lags, gamma, h_fit, g_fit, info: dict) -> dict:
     s = float(info.get('sill',  0))
     n = float(info.get('nugget',0))
     m = info.get('model', 'Spherical')
+    # Y-axis max: ensure sill line is always visible in chart area
+    g_arr = np.asarray(gamma, float)
+    y_max = max(float(np.max(g_arr)) if len(g_arr) else 0.001, float(s + n)) * 1.20
     return {
         'backgroundColor': BG,
         'tooltip': EC_TOOLTIP,
         'legend': {**EC_LEGEND, 'data': ['Experimental', f'{m} model'], 'top': 4},
         'xAxis': _axis('Lag distance (m)'),
-        'yAxis': _axis('Semivariance  γ(h)'),
+        'yAxis': _axis('Semivariance  γ(h)', min=0, max=round(y_max, 9)),
         'grid': EC_GRID,
         'series': [
             {
@@ -95,13 +98,15 @@ def variogram_echart(lags, gamma, h_fit, g_fit, info: dict) -> dict:
                             'xAxis': r,
                             'lineStyle': {'color': GREEN, 'width': 1.5, 'type': 'dashed'},
                             'label': {'formatter': f'Range={r:.1f} m',
-                                      'color': GREEN, 'fontSize': 11},
+                                      'color': GREEN, 'fontSize': 11,
+                                      'position': 'insideEndTop'},
                         },
                         {
                             'yAxis': s + n,
-                            'lineStyle': {'color': RED, 'width': 1.2, 'type': 'dotted'},
+                            'lineStyle': {'color': RED, 'width': 1.5, 'type': 'dotted'},
                             'label': {'formatter': f'Sill={s+n:.4f}',
-                                      'color': RED, 'fontSize': 10},
+                                      'color': RED, 'fontSize': 10,
+                                      'position': 'insideEndTop'},
                         },
                     ],
                 },
@@ -311,7 +316,7 @@ def heterogeneity_echart(res: pd.DataFrame, zone_name: str = '',
         'tooltip': {**EC_TOOLTIP, 'trigger': 'axis',
                     'formatter': 'N layers: {b}<br/>Heterogeneity preserved: {c}%'},
         'xAxis': _axis('Number of Layers (N)', min=1),
-        'yAxis': _axis('Heterogeneity Preserved (%)', min=0, max=105),
+        'yAxis': _axis('Heterogeneity Preserved (%)', min=0, max=100),
         'grid': dict(left='65', right='30', top='40', bottom='50', containLabel=True),
         'series': [{
             'type': 'line',
@@ -369,7 +374,7 @@ def grid_search_heatmap(all_results: dict) -> dict:
             'borderColor': BORDER,
             'textStyle': {'color': TEXT, 'fontSize': 11},
         },
-        'grid': {'left': '130', 'right': '90', 'top': '30', 'bottom': '55', 'containLabel': False},
+        'grid': {'left': '130', 'right': '20', 'top': '30', 'bottom': '65', 'containLabel': False},
         'xAxis': {
             'type': 'category',
             'data': n_cats,
@@ -392,10 +397,11 @@ def grid_search_heatmap(all_results: dict) -> dict:
             'min': round(score_min, 3),
             'max': round(score_max, 3),
             'calculable': True,
-            'orient': 'vertical',
-            'right': 6,
-            'top': '10%',
-            'bottom': '10%',
+            'orient': 'horizontal',
+            'left': 'center',
+            'bottom': 5,
+            'itemWidth': 14,
+            'itemHeight': 120,
             'textStyle': {'color': TEXT2, 'fontSize': 9},
             'inRange': {'color': ['#0a1628', '#1e3a5f', '#3b82f6', '#10b981', '#f59e0b', '#ffd700']},
         },
@@ -425,7 +431,60 @@ def grid_search_heatmap(all_results: dict) -> dict:
     }
 
 
-# ── 6. Stats table rows ───────────────────────────────────────────────────────
+# ── 6. Zone thickness per well (replaces NTG variogram) ──────────────────────
+
+def zone_thickness_echart(well_names: list, thicknesses: list, zone_name: str = '') -> dict:
+    """Horizontal bar chart — zone thickness per well for selected zone."""
+    pairs = sorted(zip(thicknesses, well_names), key=lambda x: x[0])
+    y_cats = [w for _, w in pairs]
+    x_vals = [round(float(t), 1) for t, _ in pairs]
+    avg_t  = float(np.mean(thicknesses)) if thicknesses else 0.0
+    return {
+        'backgroundColor': BG,
+        'tooltip': {**EC_TOOLTIP,
+                    'formatter': '{b}: {c} m'},
+        'grid': dict(left='80', right='60', top='30', bottom='30', containLabel=True),
+        'xAxis': _axis(f'Thickness (m)', min=0),
+        'yAxis': {
+            'type': 'category',
+            'data': y_cats,
+            'axisLabel': {'color': TEXT2, 'fontSize': 10},
+            'axisLine': {'lineStyle': {'color': BORDER}},
+            'axisTick': {'lineStyle': {'color': BORDER}},
+        },
+        'series': [
+            {
+                'type': 'bar',
+                'name': 'Thickness',
+                'data': x_vals,
+                'barMaxWidth': 28,
+                'itemStyle': {'color': GREEN, 'borderRadius': [0, 3, 3, 0]},
+                'label': {'show': True, 'position': 'right',
+                          'formatter': '{c} m',
+                          'color': TEXT, 'fontSize': 9},
+            },
+            {
+                'type': 'line',
+                'name': 'Avg',
+                'data': [avg_t] * len(y_cats),
+                'lineStyle': {'color': AMBER, 'type': 'dashed', 'width': 1.5},
+                'itemStyle': {'color': AMBER},
+                'symbol': 'none',
+                'markLine': {
+                    'silent': True,
+                    'symbol': ['none', 'none'],
+                    'data': [{'xAxis': avg_t,
+                              'lineStyle': {'color': AMBER, 'type': 'dashed', 'width': 1.5},
+                              'label': {'formatter': f'Avg {avg_t:.1f} m',
+                                        'color': AMBER, 'fontSize': 10,
+                                        'position': 'insideEndTop'}}],
+                },
+            },
+        ],
+    }
+
+
+# ── 7. Stats table rows ───────────────────────────────────────────────────────
 
 def stats_rows(results: pd.DataFrame) -> List[dict]:
     opt = results[results['optimal']].iloc[0] if results['optimal'].any() else results.iloc[-1]

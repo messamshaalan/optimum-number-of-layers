@@ -94,6 +94,10 @@ def well_log_figure(df: pd.DataFrame, tops_df: pd.DataFrame, well_name: str) -> 
     facies = df['FACIES'].values.astype(int)
 
     col_titles = ['GR (API)', 'PHIE', 'log K (mD)', 'Sw', 'NPHI / RHOB*', 'Facies']
+    # Pre-compute for scale labels
+    gr_shifted_arr = gr - 65.0
+    log_k_arr      = np.log10(np.clip(perm, 1e-4, None))
+
     fig = make_subplots(
         rows=1, cols=6,
         shared_yaxes=True,
@@ -103,7 +107,7 @@ def well_log_figure(df: pd.DataFrame, tops_df: pd.DataFrame, well_name: str) -> 
     )
 
     # -- Track 1: GR --
-    gr_shifted = gr - 65.0   # centre on cutoff
+    gr_shifted = gr_shifted_arr   # already computed above
     fig.add_trace(go.Scatter(
         x=np.where(gr_shifted < 0, gr_shifted, 0), y=depth,
         fill='tozerox', fillcolor='rgba(255,200,0,0.30)',
@@ -127,7 +131,7 @@ def well_log_figure(df: pd.DataFrame, tops_df: pd.DataFrame, well_name: str) -> 
     ), row=1, col=2)
 
     # -- Track 3: PERM (log scale) --
-    log_k = np.log10(np.clip(perm, 1e-4, None))
+    log_k = log_k_arr   # already computed above
     fig.add_trace(go.Scatter(
         x=log_k, y=depth,
         line=dict(color='#cd853f', width=1.4), name='PERM', showlegend=False,
@@ -165,6 +169,27 @@ def well_log_figure(df: pd.DataFrame, tops_df: pd.DataFrame, well_name: str) -> 
         showscale=False,
         hovertemplate='Depth: %{y:.1f} m<br>Facies: %{z}<extra></extra>',
     ), row=1, col=6)
+
+    # -- Scale labels at top of each track (min | max in track header) --
+    track_scales = [
+        (1, 'x domain',  f'{int(np.nanmin(gr_shifted))}'  , f'{int(np.nanmax(gr_shifted))}'),
+        (2, 'x2 domain', '0',                              f'{np.nanmax(phie):.3f}'),
+        (3, 'x3 domain', f'{np.nanmin(log_k):.1f}',        f'{np.nanmax(log_k):.1f}'),
+        (4, 'x4 domain', '0',                              '1.0'),
+        (5, 'x5 domain', '0',                              '0.45'),
+    ]
+    for col, xref_k, vmin, vmax in track_scales:
+        for xpos, val, anchor in [(0.0, vmin, 'left'), (1.0, vmax, 'right')]:
+            fig.add_annotation(
+                text=f'<b>{val}</b>',
+                xref=xref_k, yref='y domain',
+                x=xpos, y=1.02,
+                xanchor=anchor, yanchor='bottom',
+                showarrow=False,
+                font=dict(color=TEXT2, size=8),
+                bgcolor=PANEL,
+                borderpad=1,
+            )
 
     # -- Formation tops --
     if tops_df is not None and len(tops_df) > 0:
@@ -731,6 +756,7 @@ def upscaled_comparison_figure(df_zone: pd.DataFrame, n_layers: int,
 
 def petrel_upscaled_allzones(
     wells: dict, zone_list: list, n_layers_dict: dict, well_name: str,
+    tops_df: Optional[pd.DataFrame] = None,
 ) -> go.Figure:
     """Petrel-style upscaled display covering multiple depth zones for one well."""
     df_well = wells.get(well_name, pd.DataFrame())
@@ -748,11 +774,13 @@ def petrel_upscaled_allzones(
 
     df_all = pd.concat(frames, ignore_index=True).sort_values('DEPTH')
     n_lay  = n_layers_dict.get(zone_list[0], 10)
-    return petrel_upscaled_figure(df_all, n_lay, ' + '.join(zone_list), _multi=True)
+    return petrel_upscaled_figure(df_all, n_lay, ' + '.join(zone_list),
+                                  _multi=True, tops_df=tops_df)
 
 
 def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
-                           zone_name: str, _multi: bool = False) -> go.Figure:
+                           zone_name: str, _multi: bool = False,
+                           tops_df: Optional[pd.DataFrame] = None) -> go.Figure:
     """Petrel-style upscaled display: coloured cell blocks + original log overlay.
 
     Row 1 (thin): colourbar strip per property track.
@@ -867,21 +895,6 @@ def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
             zmin=zmin_h, zmax=zmax_h,
             colorscale=PETREL_CS,
             zsmooth=False,
-            showscale=True,
-            colorbar=dict(
-                len=0.70, thickness=10,
-                x=1.01,
-                tickfont=dict(color=TEXT2, size=8),
-                title=dict(text=label, font=dict(color=TEXT2, size=8), side='right'),
-            ),
-            hovertemplate=f'{label}: %{{z:.4f}}<br>Depth: %{{y:.1f}} m<extra></extra>',
-        ) if ci == n_props + 1 else go.Heatmap(
-            z=z_arr,
-            y=y_centers,
-            x=[0.1, 0.9],
-            zmin=zmin_h, zmax=zmax_h,
-            colorscale=PETREL_CS,
-            zsmooth=False,
             showscale=False,
             hovertemplate=f'{label}: %{{z:.4f}}<br>Depth: %{{y:.1f}} m<extra></extra>',
         ), row=2, col=ci)
@@ -902,6 +915,23 @@ def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
 
         fig.update_xaxes(showticklabels=False, showgrid=False,
                          zeroline=False, range=[0, 1], row=2, col=ci)
+
+    # ── Formation tops overlay on main data rows ─────────────────────────────
+    if tops_df is not None and len(tops_df) > 0:
+        shown_labels = set()
+        for _, tr in tops_df.iterrows():
+            zname = tr['ZONE']
+            top_v = float(tr['TOP'])
+            clr   = ZONE_COLORS.get(zname, '#ffffff')
+            for ci in range(2, n_props + 2):
+                kw = {}
+                if ci == 2 and zname not in shown_labels:
+                    kw = dict(annotation_text=f'<b>{zname.replace("_"," ")}</b>',
+                              annotation_position='top left',
+                              annotation_font=dict(size=8, color=clr))
+                    shown_labels.add(zname)
+                fig.add_hline(y=top_v, row=2, col=ci,
+                              line=dict(color=clr, width=1.8, dash='dash'), **kw)
 
     # ── Y axes ──────────────────────────────────────────────────────────────
     fig.update_yaxes(autorange='reversed', tickfont=dict(color=TEXT2, size=10),
