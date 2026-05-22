@@ -758,29 +758,38 @@ def petrel_upscaled_allzones(
     wells: dict, zone_list: list, n_layers_dict: dict, well_name: str,
     tops_df: Optional[pd.DataFrame] = None,
 ) -> go.Figure:
-    """Petrel-style upscaled display covering multiple depth zones for one well."""
+    """Petrel-style upscaled display — per-zone upscaling, combined depth view."""
+    from .analysis import upscale_zone as _uz
     df_well = wells.get(well_name, pd.DataFrame())
     if df_well.empty:
         return _empty_fig(f'No data for {well_name}')
 
-    frames = []
+    orig_frames, up_frames = [], []
     for zone in zone_list:
-        sub = df_well[df_well['ZONE'] == zone].copy()
-        if not sub.empty:
-            sub['_zone'] = zone
-            frames.append(sub)
-    if not frames:
+        zdf = df_well[df_well['ZONE'] == zone].copy()
+        if zdf.empty:
+            continue
+        up = _uz(zdf, n_layers_dict.get(zone, 10))
+        if not up.empty:
+            up_frames.append(up)
+        zdf['_zone'] = zone
+        orig_frames.append(zdf)
+
+    if not orig_frames:
         return _empty_fig('No zone data')
 
-    df_all = pd.concat(frames, ignore_index=True).sort_values('DEPTH')
-    n_lay  = n_layers_dict.get(zone_list[0], 10)
-    return petrel_upscaled_figure(df_all, n_lay, ' + '.join(zone_list),
-                                  _multi=True, tops_df=tops_df)
+    df_all  = pd.concat(orig_frames, ignore_index=True).sort_values('DEPTH')
+    all_up  = pd.concat(up_frames,   ignore_index=True) if up_frames else pd.DataFrame()
+    label   = ' + '.join(z.replace('_', ' ') for z in zone_list)
+    return petrel_upscaled_figure(df_all, 0, label, _multi=True,
+                                  tops_df=tops_df, _pre_up=all_up)
 
 
 def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
                            zone_name: str, _multi: bool = False,
-                           tops_df: Optional[pd.DataFrame] = None) -> go.Figure:
+                           tops_df: Optional[pd.DataFrame] = None,
+                           _pre_up: Optional[pd.DataFrame] = None,
+                           props_to_show: Optional[List[str]] = None) -> go.Figure:
     """Petrel-style upscaled display: coloured cell blocks + original log overlay.
 
     Row 1 (thin): colourbar strip per property track.
@@ -791,17 +800,22 @@ def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
     if df_zone is None or df_zone.empty:
         return _empty_fig('No zone data')
 
-    n_layers_actual = n_layers if not _multi else max(5, n_layers)
-    up = upscale_zone(df_zone, n_layers_actual)
+    # Use pre-built upscaled df (all-zones mode) or upscale from scratch
+    if _pre_up is not None and not _pre_up.empty:
+        up = _pre_up
+    else:
+        n_layers_actual = max(1, n_layers if not _multi else max(5, n_layers))
+        up = upscale_zone(df_zone, n_layers_actual)
     if up.empty:
         return _empty_fig('Upscaling failed')
 
-    props = [
-        ('PHIE', 'PHIE',     0.0,  0.35),
+    _all_props = [
+        ('PHIE', 'PHIE',      0.0,  0.35),
         ('PERM', 'PERM (mD)', 0.01, None),
-        ('SW',   'Sw',       0.0,  1.0),
-        ('NTG',  'NTG',      0.0,  1.0),
+        ('SW',   'Sw',        0.0,  1.0),
+        ('NTG',  'NTG',       0.0,  1.0),
     ]
+    props   = [p for p in _all_props if p[0] in props_to_show] if props_to_show else _all_props
     n_props = len(props)
 
     PETREL_CS = [
@@ -815,7 +829,8 @@ def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
     ]
 
     # 2 rows: thin colorbar strip (row1) + main data (row2)
-    col_widths = [0.04] + [0.96 / n_props] * n_props
+    _prop_w = 0.96 / max(n_props, 1)
+    col_widths = [0.04] + [_prop_w] * n_props
     row_heights = [0.06, 0.94]
 
     fig = make_subplots(

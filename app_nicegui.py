@@ -19,11 +19,11 @@ from src.analysis import (
 )
 from src.figures import (
     well_log_figure, petrel_upscaled_figure, petrel_upscaled_allzones,
-    ZONE_COLORS, FACIES_COLORS,
+    crossplot_figure, ZONE_COLORS, FACIES_COLORS,
 )
 from src.echarts import (
-    variogram_echart, layer_metric_echart, crossplot_echart,
-    heterogeneity_echart, grid_search_heatmap, stats_rows, zone_thickness_echart,
+    variogram_echart, layer_metric_echart,
+    heterogeneity_echart, grid_search_heatmap, stats_rows,
     BLUE, GREEN, AMBER, PURPLE, GOLD, RED, CYAN, BG, PANEL, BORDER, TEXT, TEXT2,
 )
 from src.synthetic import FACIES_NAMES as SYN_FACIES_NAMES
@@ -38,6 +38,7 @@ VARIO_PROPS = [
     ('PHIE', BLUE),
     ('PERM', AMBER),
     ('SW',   CYAN),
+    ('HCPV', GREEN),   # PHIE × NTG × (1-SW) × dz  — proxy for pay quality
 ]
 VARIO_PROP_KEYS = [p[0] for p in VARIO_PROPS]
 
@@ -118,6 +119,7 @@ def index():
         'target_pct':   0.85,       # target preservation %
         'hetero_target': 80.0,      # target heterogeneity %
         'all_zones_up': False,      # show all zones in log vs upscaled
+        'up_props':     ['PHIE', 'PERM', 'SW', 'NTG'],
         'auto_refresh': False,
         'refresh_sec':  30,
     }
@@ -136,18 +138,26 @@ def index():
         _set_plotly(charts['welllog'], well_log_figure(df, wtops, S['log_well']))
 
     def upd_xplot():
-        df = _all_df(S['wells'], S['zone_filter'])
-        if df.empty:
+        sel_wells = {w: WELLS[w] for w in S['wells'] if w in WELLS}
+        if not sel_wells:
             return
-        _set_echart(charts['xplot'],
-                    crossplot_echart(df, S['x_prop'], S['y_prop'], S['color_by']))
+        _set_plotly(charts['xplot'],
+                    crossplot_figure(sel_wells, S['x_prop'], S['y_prop'],
+                                     S['color_by'], S['zone_filter']))
 
     def upd_vario_panel(prop: str):
         df_z = _zone_df(S['log_well'], S['zone'])
-        if df_z.empty or prop not in df_z.columns:
+        if df_z.empty:
             return
-        dz   = float(df_z['DEPTH'].diff().median())
-        lags, gamma, _ = compute_variogram(df_z[prop].values, dz, n_lags=30)
+        dz = float(df_z['DEPTH'].diff().median())
+        if prop == 'HCPV':
+            values = (df_z['PHIE'].values * df_z['NTG'].values
+                      * (1 - df_z['SW'].values) * dz)
+        elif prop not in df_z.columns:
+            return
+        else:
+            values = df_z[prop].values
+        lags, gamma, _ = compute_variogram(values, dz, n_lags=30)
 
         params = S['vario_params'].get(prop)
         if params and params.get('manual'):
@@ -178,21 +188,9 @@ def index():
                 f"Zone thickness: {thick:.1f} m  |  Range: {res['range']:.1f} m  |  "
                 f"Sill: {res['sill']:.5f}  |  Nugget: {res['nugget']:.5f}  →  Min layers: {rec_n}")
 
-    def upd_thickness_chart():
-        thicknesses = [_zone_thickness(wn, S['zone']) for wn in WELL_NAMES]
-        _set_echart(charts['vario_thick'],
-                    zone_thickness_echart(list(WELL_NAMES), thicknesses, S['zone']))
-        avg_t = float(np.mean(thicknesses)) if thicknesses else 0.0
-        if 'vario_lbl_thick' in labels:
-            labels['vario_lbl_thick'].set_text(
-                f"Zone: {S['zone'].replace('_',' ')}  |  "
-                f"Avg: {avg_t:.1f} m  |  "
-                f"Min: {min(thicknesses):.1f} m  |  Max: {max(thicknesses):.1f} m")
-
     def upd_vario():
         for prop in VARIO_PROP_KEYS:
             upd_vario_panel(prop)
-        upd_thickness_chart()
 
     def upd_layer():
         df_z = _combined_zone(S['wells'], S['zone'])
@@ -251,6 +249,7 @@ def index():
 
     def upd_upscaled():
         wtops = TOPS[TOPS['WELL'] == S['log_well']]
+        show_p = S['up_props'] or ['PHIE']
         if S['all_zones_up']:
             _set_plotly(charts['upscaled'],
                         petrel_upscaled_allzones(
@@ -261,7 +260,7 @@ def index():
             df_z = _zone_df(S['log_well'], S['zone'])
             _set_plotly(charts['upscaled'],
                         petrel_upscaled_figure(df_z, S['n_layers'], S['zone'],
-                                               tops_df=wtops))
+                                               tops_df=wtops, props_to_show=show_p))
 
     def upd_stats():
         all_res = _run_all_zones(S['wells'], S['max_layers'])
@@ -603,7 +602,7 @@ def index():
                     'background:#1a2332;border:1px solid #2d3a4f;padding:10px'):
                 ui.label('Optimal N Layers').classes('text-[10px] text-gray-400')
                 labels['opt_n'] = ui.label('—').classes(
-                    'text-[20px] font-bold text-[#ffd700] leading-tight')
+                    'text-[40px] font-bold text-[#ffd700] leading-tight')
                 labels['score'] = ui.label('Score: —').classes('text-[10px] text-green-400')
                 labels['hcpv_lbl']  = ui.label('HCPV proxy: —').classes('text-[10px] text-cyan-400')
                 labels['thick_lbl'] = ui.label('Zone thickness: —').classes('text-[10px] text-gray-400')
@@ -665,6 +664,56 @@ def index():
                     charts['welllog'] = ui.plotly(
                         well_log_figure(df0, t0, WELL_NAMES[0])
                     ).classes('w-full').style('height:720px')
+
+                # ── Interactive click-to-set formation top ────────────────────
+                _click_state = {'depth': None}
+                with ui.card().classes('w-full mt-1').style(
+                        'background:#0f1c2e;border:1px solid #1e3a5f;'
+                        'border-radius:5px;padding:6px 14px') as _click_card:
+                    _click_card.set_visibility(False)
+                    with ui.row().classes('items-center gap-3 flex-wrap'):
+                        ui.html('<span style="font-size:10px;color:#f59e0b;'
+                                'font-weight:700">CLICKED DEPTH →</span>')
+                        _click_lbl = ui.label('—').classes('text-[13px] font-bold text-blue-400')
+                        ui.label('Assign to zone:').classes('text-[10px] text-gray-400')
+                        _click_zone = ui.select(
+                            options=list(ZONE_COLORS.keys()),
+                            value=RESERVOIR_ZONES[-1],
+                        ).classes('w-36 text-[11px]').props('dense')
+                        def _apply_click_top():
+                            if _click_state['depth'] is None:
+                                return
+                            zn  = _click_zone.value
+                            top = _click_state['depth']
+                            mask = (TOPS['WELL'] == S['log_well']) & (TOPS['ZONE'] == zn)
+                            if mask.any():
+                                TOPS.loc[mask, 'TOP'] = top
+                            else:
+                                TOPS.loc[len(TOPS)] = {
+                                    'WELL': S['log_well'], 'ZONE': zn,
+                                    'TOP': top, 'BASE': top + 10,
+                                    'THICKNESS': 0, 'X': 0, 'Y': 0}
+                            upd_tops_inputs()
+                            upd_welllog()
+                            _click_card.set_visibility(False)
+                            ui.notify(f'{zn} top → {top:.1f} m', color='positive')
+                        ui.button('Set Top', on_click=_apply_click_top).props(
+                            'flat dense size=sm').style(
+                            'border:1px solid #10b981;color:#10b981')
+                        ui.button('✕', on_click=lambda: _click_card.set_visibility(False)
+                                  ).props('flat dense size=sm').classes('text-gray-500')
+
+                def _on_log_click(e):
+                    try:
+                        pts = (e.args or {}).get('points', [])
+                        if pts:
+                            y = float(pts[0].get('y', 0))
+                            _click_state['depth'] = y
+                            _click_lbl.set_text(f'{y:.1f} m')
+                            _click_card.set_visibility(True)
+                    except Exception:
+                        pass
+                charts['welllog'].on('plotly_click', _on_log_click)
 
                 # ── Formation Tops Editor ─────────────────────────────────────
                 with ui.expansion('Edit Formation Tops', icon='edit').classes(
@@ -736,8 +785,9 @@ def index():
                     for w in [xp_x, xp_y, xp_col, xp_zf]:
                         w.on_value_change(_on_xp)
                 with ui.element('div').classes('geo-card'):
-                    charts['xplot'] = ui.echart(
-                        {'backgroundColor': BG, 'series': []}
+                    charts['xplot'] = ui.plotly(
+                        crossplot_figure({w: WELLS[w] for w in WELL_NAMES},
+                                         'PHIE', 'PERM', 'FACIES')
                     ).classes('w-full').style('height:580px')
 
             # ── Variogram ─────────────────────────────────────────────────────
@@ -747,11 +797,17 @@ def index():
                         df_zi = WELLS[WELL_NAMES[0]]
                         df_zi = df_zi[df_zi['ZONE'] == RESERVOIR_ZONES[-1]]
                         dz_i  = float(df_zi['DEPTH'].diff().median())
-                        l0, g0, _ = compute_variogram(df_zi[prop].values, dz_i, 30)
+                        if prop == 'HCPV':
+                            _init_vals = (df_zi['PHIE'].values * df_zi['NTG'].values
+                                          * (1 - df_zi['SW'].values) * dz_i)
+                        else:
+                            _init_vals = df_zi[prop].values
+                        l0, g0, _ = compute_variogram(_init_vals, dz_i, 30)
                         r0 = fit_variogram(l0, g0, 'Spherical')
 
+                        _prop_lbl = 'HCPV (φ·NTG·(1-Sw)·dz)' if prop == 'HCPV' else prop
                         with ui.element('div').classes('geo-card'):
-                            ui.html(f'<div class="geo-header">{prop} Variogram</div>')
+                            ui.html(f'<div class="geo-header">{_prop_lbl} Variogram</div>')
                             charts[f'vario_{prop}'] = ui.echart(
                                 variogram_echart(l0, g0, r0['h_fit'], r0['g_fit'], r0)
                             ).classes('w-full').style('height:280px')
@@ -807,15 +863,6 @@ def index():
                                 'nugget': r0['nugget'], 'sill': r0['sill'],
                                 'range_': r0['range'], 'manual': False}
 
-                    # ── Zone Thickness per Well (4th panel — replaces NTG) ─────
-                    with ui.element('div').classes('geo-card'):
-                        ui.html('<div class="geo-header">Zone Thickness per Well</div>')
-                        charts['vario_thick'] = ui.echart(
-                            {'backgroundColor': BG, 'series': []}
-                        ).classes('w-full').style('height:280px')
-                        labels['vario_lbl_thick'] = ui.label('').classes(
-                            'text-[10px] text-cyan-400 px-2 pb-1')
-
             # ── Layer Optimisation ────────────────────────────────────────────
             with ui.tab_panel('layer'):
                 # Target % info strip
@@ -863,7 +910,7 @@ def index():
 
             # ── Log vs Upscaled ───────────────────────────────────────────────
             with ui.tab_panel('up'):
-                with ui.row().classes('items-center gap-3 mb-2').style(
+                with ui.row().classes('items-center gap-3 mb-2 flex-wrap').style(
                         'background:#111827;border:1px solid #2d3a4f;'
                         'border-radius:5px;padding:6px 12px'):
                     ui.label('Display:').classes('text-[10px] text-gray-400')
@@ -873,13 +920,25 @@ def index():
                     ui.switch('All reservoir zones', value=False,
                               on_change=_on_allzones).props('color=blue dense').classes(
                         'text-[11px] text-gray-300')
+                    ui.separator().props('vertical').style('background:#2d3a4f')
+                    ui.label('Properties:').classes('text-[10px] text-gray-400')
+                    def _on_up_props(e):
+                        S['up_props'] = list(e.value) if e.value else ['PHIE']
+                        upd_upscaled()
+                    ui.select(
+                        options=['PHIE', 'PERM', 'SW', 'NTG'],
+                        value=['PHIE', 'PERM', 'SW', 'NTG'],
+                        multiple=True,
+                        on_change=_on_up_props,
+                    ).classes('w-52 text-[11px]').props('dense outlined')
 
                 with ui.element('div').classes('geo-card'):
                     df_z0   = _zone_df(WELL_NAMES[0], RESERVOIR_ZONES[-1])
                     tops_z0 = TOPS[TOPS['WELL'] == WELL_NAMES[0]]
                     charts['upscaled'] = ui.plotly(
                         petrel_upscaled_figure(df_z0, 10, RESERVOIR_ZONES[-1],
-                                               tops_df=tops_z0)
+                                               tops_df=tops_z0,
+                                               props_to_show=S['up_props'])
                     ).classes('w-full').style('height:720px')
 
             # ── Statistics ────────────────────────────────────────────────────
@@ -945,10 +1004,9 @@ def index():
             ui.label('LayerOptimum Pro v3.0').classes('text-[10px] text-gray-600')
 
     # ── Deferred initial population (gives browser time to init ECharts) ──────
-    ui.timer(0.4, upd_xplot,     once=True)
-    ui.timer(0.6, upd_layer,     once=True)
-    ui.timer(1.2, upd_stats,     once=True)
-    ui.timer(0.8, upd_vario,     once=True)
+    ui.timer(0.6, upd_layer,  once=True)
+    ui.timer(1.2, upd_stats,  once=True)
+    ui.timer(0.8, upd_vario,  once=True)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

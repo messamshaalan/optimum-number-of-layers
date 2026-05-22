@@ -374,7 +374,7 @@ def grid_search_heatmap(all_results: dict) -> dict:
             'borderColor': BORDER,
             'textStyle': {'color': TEXT, 'fontSize': 11},
         },
-        'grid': {'left': '130', 'right': '20', 'top': '30', 'bottom': '65', 'containLabel': False},
+        'grid': {'left': '10', 'right': '10', 'top': '30', 'bottom': '65', 'containLabel': True},
         'xAxis': {
             'type': 'category',
             'data': n_cats,
