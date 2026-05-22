@@ -278,3 +278,111 @@ def recommend_from_variogram(zone_thickness: float, vertical_range: float) -> in
         return 10
     n = int(np.ceil(zone_thickness / vertical_range))
     return max(1, n)
+
+
+# ---------------------------------------------------------------------------
+# HCPV proxy
+# ---------------------------------------------------------------------------
+
+def compute_hcpv_proxy(df: pd.DataFrame) -> np.ndarray:
+    """Hydrocarbon pore volume proxy per sample: PHIE × NTG × (1-Sw) × dz."""
+    dz   = np.abs(df['DEPTH'].diff().fillna(df['DEPTH'].diff().median())).values
+    phie = np.clip(df['PHIE'].values, 0.0, 1.0)
+    ntg  = np.clip(df['NTG'].values, 0.0, 1.0) if 'NTG' in df.columns else np.ones(len(df))
+    sw   = np.clip(df['SW'].values,  0.0, 1.0) if 'SW'  in df.columns else np.zeros(len(df))
+    return phie * ntg * np.clip(1.0 - sw, 0.0, 1.0) * dz
+
+
+# ---------------------------------------------------------------------------
+# GeoConvention 2010 heterogeneity coarsening algorithm
+# "A Workflow for Optimal Simulation Grid Design"
+# ---------------------------------------------------------------------------
+
+def _find_elbow(x: np.ndarray, y: np.ndarray) -> int:
+    """Return the x-value at the elbow of the curve (max perpendicular distance)."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    if len(x) < 3:
+        return int(x[0])
+    rng_x = x.max() - x.min() + 1e-12
+    rng_y = y.max() - y.min() + 1e-12
+    xn = (x - x.min()) / rng_x
+    yn = (y - y.min()) / rng_y
+    d  = np.array([xn[-1] - xn[0], yn[-1] - yn[0]])
+    d /= np.linalg.norm(d) + 1e-12
+    perp = np.array([-d[1], d[0]])
+    pts  = np.column_stack([xn - xn[0], yn - yn[0]])
+    dists = np.abs(pts @ perp)
+    return int(x[np.argmax(dists)])
+
+
+def heterogeneity_coarsening(
+    df: pd.DataFrame,
+    perm_col: str = 'PERM',
+    phi_col:  str = 'PHIE',
+) -> pd.DataFrame:
+    """Greedy merge algorithm from GeoConvention 2010.
+
+    Local velocity  P  = K / phi  (Equation 1 — Buckley-Leverett speed proxy)
+    Total heterogeneity H = Σ n_k (P_k - P̄)²          (Equation 2)
+    Variation change    W_k = (n_k n_{k+1}/(n_k+n_{k+1})) (P_k-P_{k+1})²  (Eq. 4)
+    At each step the pair with minimum W_k is merged.
+
+    Returns DataFrame:
+        n_layers, heterogeneity_pct, h_abs, inflection (bool), h_lost_pct
+    """
+    df = df.reset_index(drop=True)
+    n  = len(df)
+    if n < 2:
+        return pd.DataFrame()
+
+    dz   = np.abs(df['DEPTH'].diff().fillna(df['DEPTH'].diff().median())).values
+    phi  = np.clip(df[phi_col].values, 1e-4, None)
+    perm = np.clip(df[perm_col].values, 1e-4, None)
+
+    P_cur = perm / phi                  # local velocity (Eq. 1)
+    n_cur = dz.copy()                   # bulk-volume proxy (thickness × unit area)
+
+    def _h_total(nv, Pv):
+        p_bar = np.dot(nv, Pv) / (nv.sum() + 1e-15)
+        return float(np.dot(nv, (Pv - p_bar) ** 2))
+
+    H0 = _h_total(n_cur, P_cur)
+    if H0 < 1e-15:
+        H0 = 1e-15
+
+    records = [{'n_layers': n, 'h_abs': H0, 'heterogeneity_pct': 100.0, 'h_lost_pct': 0.0}]
+
+    H_cur = H0
+    for _ in range(n - 1):
+        m = len(P_cur)
+        if m < 2:
+            break
+        # Variation change for each adjacent pair (Eq. 4)
+        nk  = n_cur[:-1]
+        nk1 = n_cur[1:]
+        Wk  = (nk * nk1 / (nk + nk1 + 1e-15)) * (P_cur[:-1] - P_cur[1:]) ** 2
+        k_star = int(np.argmin(Wk))
+        W_min  = float(Wk[k_star])
+
+        # Merge layers k* and k*+1 (volume-weighted mean, Eq. 6)
+        n_new = n_cur[k_star] + n_cur[k_star + 1]
+        P_new = (n_cur[k_star] * P_cur[k_star] + n_cur[k_star + 1] * P_cur[k_star + 1]) / n_new
+        P_cur = np.concatenate([P_cur[:k_star], [P_new], P_cur[k_star + 2:]])
+        n_cur = np.concatenate([n_cur[:k_star], [n_new], n_cur[k_star + 2:]])
+
+        H_cur = max(0.0, H_cur - W_min)
+        h_pct = 100.0 * H_cur / H0
+        records.append({
+            'n_layers':         int(len(P_cur)),
+            'h_abs':            H_cur,
+            'heterogeneity_pct': round(h_pct, 3),
+            'h_lost_pct':       round(100.0 - h_pct, 3),
+        })
+
+    res = pd.DataFrame(records).sort_values('n_layers').reset_index(drop=True)
+
+    # Elbow = optimal N (max perpendicular distance from diagonal)
+    opt_n = _find_elbow(res['n_layers'].values, res['heterogeneity_pct'].values)
+    res['inflection'] = res['n_layers'] == opt_n
+    return res

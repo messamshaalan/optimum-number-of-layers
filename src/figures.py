@@ -729,161 +729,209 @@ def upscaled_comparison_figure(df_zone: pd.DataFrame, n_layers: int,
     return fig
 
 
+def petrel_upscaled_allzones(
+    wells: dict, zone_list: list, n_layers_dict: dict, well_name: str,
+) -> go.Figure:
+    """Petrel-style upscaled display covering multiple depth zones for one well."""
+    df_well = wells.get(well_name, pd.DataFrame())
+    if df_well.empty:
+        return _empty_fig(f'No data for {well_name}')
+
+    frames = []
+    for zone in zone_list:
+        sub = df_well[df_well['ZONE'] == zone].copy()
+        if not sub.empty:
+            sub['_zone'] = zone
+            frames.append(sub)
+    if not frames:
+        return _empty_fig('No zone data')
+
+    df_all = pd.concat(frames, ignore_index=True).sort_values('DEPTH')
+    n_lay  = n_layers_dict.get(zone_list[0], 10)
+    return petrel_upscaled_figure(df_all, n_lay, ' + '.join(zone_list), _multi=True)
+
+
 def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
-                           zone_name: str) -> go.Figure:
+                           zone_name: str, _multi: bool = False) -> go.Figure:
     """Petrel-style upscaled display: coloured cell blocks + original log overlay.
 
-    Each upscaled layer is drawn as a filled rectangle (constant colour = property value)
-    using a Heatmap per track, with a thin black Scatter overlay for the original log.
-    Rainbow/jet colorscale matches Petrel cell-colour convention.
+    Row 1 (thin): colourbar strip per property track.
+    Row 2 (tall): heatmap cell blocks + thin black original log overlay.
+    Rainbow (blue→cyan→green→yellow→red) colorscale per track.
+    White horizontal grid lines at every layer boundary.
     """
     if df_zone is None or df_zone.empty:
         return _empty_fig('No zone data')
 
-    up = upscale_zone(df_zone, n_layers)
+    n_layers_actual = n_layers if not _multi else max(5, n_layers)
+    up = upscale_zone(df_zone, n_layers_actual)
     if up.empty:
         return _empty_fig('Upscaling failed')
 
     props = [
-        ('PHIE', 'PHIE', 0.0,   0.35),
+        ('PHIE', 'PHIE',     0.0,  0.35),
         ('PERM', 'PERM (mD)', 0.01, None),
-        ('SW',   'Sw',   0.0,   1.0),
-        ('NTG',  'NTG',  0.0,   1.0),
+        ('SW',   'Sw',       0.0,  1.0),
+        ('NTG',  'NTG',      0.0,  1.0),
+    ]
+    n_props = len(props)
+
+    PETREL_CS = [
+        [0.00, '#0000cc'],
+        [0.16, '#00ccff'],
+        [0.33, '#00ff88'],
+        [0.50, '#ffff00'],
+        [0.67, '#ff8800'],
+        [0.83, '#ff2200'],
+        [1.00, '#880000'],
     ]
 
-    n_props = len(props)
-    # one narrow depth-axis column + n_props property columns
+    # 2 rows: thin colorbar strip (row1) + main data (row2)
     col_widths = [0.04] + [0.96 / n_props] * n_props
-    col_titles = ['Depth'] + [p[1] for p in props]
+    row_heights = [0.06, 0.94]
 
     fig = make_subplots(
-        rows=1, cols=n_props + 1,
+        rows=2, cols=n_props + 1,
         shared_yaxes=True,
+        shared_xaxes=False,
+        row_heights=row_heights,
         horizontal_spacing=0.004,
+        vertical_spacing=0.01,
         column_widths=col_widths,
-        subplot_titles=col_titles,
     )
 
     depth_orig = df_zone['DEPTH'].values
-    d_min = float(depth_orig.min())
-    d_max = float(depth_orig.max())
 
-    PETREL_COLORSCALE = [
-        [0.00, '#0000ff'],
-        [0.16, '#00ffff'],
-        [0.33, '#00ff00'],
-        [0.50, '#ffff00'],
-        [0.67, '#ff8000'],
-        [0.83, '#ff0000'],
-        [1.00, '#800000'],
-    ]
-
-    # depth-axis track (col 1) — just a white tick ruler
-    fig.add_trace(go.Scatter(
-        x=[0, 0], y=[d_min, d_max],
-        mode='lines', line=dict(width=0), showlegend=False,
-        hoverinfo='skip',
-    ), row=1, col=1)
-
-    # draw regular depth ticks as annotations later — empty track
-    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False,
-                     range=[0, 1], row=1, col=1)
+    # ── Depth ruler column (col 1, row 2) ─────────────────────────────────────
+    d_min, d_max = float(depth_orig.min()), float(depth_orig.max())
+    fig.add_trace(go.Scatter(x=[0, 0], y=[d_min, d_max],
+                             mode='lines', line=dict(width=0),
+                             showlegend=False, hoverinfo='skip'), row=2, col=1)
+    fig.update_xaxes(showticklabels=False, showgrid=False,
+                     zeroline=False, range=[0, 1], row=1, col=1)
+    fig.update_xaxes(showticklabels=False, showgrid=False,
+                     zeroline=False, range=[0, 1], row=2, col=1)
 
     for ci, (prop, label, vmin, vmax) in enumerate(props, 2):
         if prop not in df_zone.columns:
             continue
 
         orig_vals = df_zone[prop].values
-        use_log = (prop == 'PERM')
+        use_log   = (prop == 'PERM')
 
-        # Build a 2-column heatmap: column 0=left edge, column 1=right edge of each cell
-        # Each upscaled layer gets a row, z-value = upscaled property value
-        z_rows = []
-        y_centers = []
+        # Value range
+        if use_log:
+            orig_plot = np.log10(np.clip(orig_vals, 0.01, None))
+            zmin_h    = float(np.nanmin(orig_plot))
+            zmax_h    = float(np.nanmax(orig_plot))
+        else:
+            orig_plot = orig_vals.astype(float)
+            zmin_h    = vmin if vmin is not None else float(np.nanmin(orig_vals))
+            zmax_h    = vmax if vmax is not None else float(np.nanmax(orig_vals))
+        if zmax_h <= zmin_h:
+            zmax_h = zmin_h + 1e-6
+
+        # ── Row 1: colorbar strip (gradient bar across full property range) ───
+        strip_n  = 50
+        strip_z  = np.linspace(zmin_h, zmax_h, strip_n).reshape(1, -1)
+        strip_x  = np.linspace(0, 1, strip_n)
+        fig.add_trace(go.Heatmap(
+            z=strip_z,
+            x=strip_x,
+            y=[0],
+            zmin=zmin_h, zmax=zmax_h,
+            colorscale=PETREL_CS,
+            zsmooth=False,
+            showscale=False,
+            hoverinfo='skip',
+        ), row=1, col=ci)
+        # property name annotation over the strip
+        fig.add_annotation(
+            text=f'<b>{label}</b>',
+            xref=f'x{(ci-1)*2 + 1 if ci > 1 else 1} domain' if False else 'paper',
+            yref='paper',
+            x=sum(col_widths[:ci]) + col_widths[ci] / 2,
+            y=1.02,
+            showarrow=False,
+            font=dict(color=AMBER, size=10),
+            xanchor='center', yanchor='bottom',
+        )
+        fig.update_xaxes(showticklabels=False, showgrid=False,
+                         zeroline=False, range=[0, 1], row=1, col=ci)
+
+        # ── Row 2: heatmap cell blocks ─────────────────────────────────────────
+        y_centers = up['DEPTH_MID'].values.tolist()
+        z_vals    = []
         for _, ur in up.iterrows():
             v = float(ur[prop])
-            if use_log:
-                v = np.log10(max(v, 0.01))
-            z_rows.append([v, v])
-            y_centers.append(float(ur['DEPTH_MID']))
+            z_vals.append(np.log10(max(v, 0.01)) if use_log else v)
 
-        z_arr = np.array(z_rows)
-
-        if use_log:
-            all_log = np.log10(np.clip(orig_vals, 0.01, None))
-            zmin_h = float(np.nanmin(all_log))
-            zmax_h = float(np.nanmax(all_log))
-        else:
-            zmin_h = vmin if vmin is not None else float(np.nanmin(orig_vals))
-            zmax_h = vmax if vmax is not None else float(np.nanmax(orig_vals))
-
-        # Layer boundaries for white grid lines
-        layer_bounds = list(up['DEPTH_TOP'].values) + [float(up['DEPTH_BASE'].values[-1])]
+        z_arr = np.array([[v, v] for v in z_vals])
+        layer_bounds = (list(up['DEPTH_TOP'].values)
+                        + [float(up['DEPTH_BASE'].values[-1])])
 
         fig.add_trace(go.Heatmap(
             z=z_arr,
             y=y_centers,
             x=[0.1, 0.9],
             zmin=zmin_h, zmax=zmax_h,
-            colorscale=PETREL_COLORSCALE,
+            colorscale=PETREL_CS,
             zsmooth=False,
-            showscale=True if ci == 2 else False,
+            showscale=True,
             colorbar=dict(
-                len=0.5, thickness=8,
-                x=1.01 if ci == n_props + 1 else None,
-                tickfont=dict(color=TEXT2, size=9),
-                title=dict(text=label, font=dict(color=TEXT2, size=9), side='right'),
-            ) if ci == 2 else {},
+                len=0.70, thickness=10,
+                x=1.01,
+                tickfont=dict(color=TEXT2, size=8),
+                title=dict(text=label, font=dict(color=TEXT2, size=8), side='right'),
+            ),
             hovertemplate=f'{label}: %{{z:.4f}}<br>Depth: %{{y:.1f}} m<extra></extra>',
-        ), row=1, col=ci)
+        ) if ci == n_props + 1 else go.Heatmap(
+            z=z_arr,
+            y=y_centers,
+            x=[0.1, 0.9],
+            zmin=zmin_h, zmax=zmax_h,
+            colorscale=PETREL_CS,
+            zsmooth=False,
+            showscale=False,
+            hovertemplate=f'{label}: %{{z:.4f}}<br>Depth: %{{y:.1f}} m<extra></extra>',
+        ), row=2, col=ci)
 
-        # White horizontal grid lines at layer boundaries
+        # White layer-boundary lines
         for bd in layer_bounds:
-            fig.add_shape(
-                type='line', x0=0, x1=1, y0=bd, y1=bd,
-                xref=f'x{ci} domain', yref='y',
-                line=dict(color='white', width=0.8),
-            )
+            fig.add_hline(y=bd, line=dict(color='white', width=0.7),
+                          row=2, col=ci)
 
-        # Original log overlay as thin black curve
-        x_orig = np.log10(np.clip(orig_vals, 0.01, None)) if use_log else orig_vals
-        # normalise to 0–1 within the track
-        x_range = zmax_h - zmin_h if zmax_h > zmin_h else 1.0
-        x_norm = (x_orig - zmin_h) / x_range
+        # Original log overlay (thin black)
+        x_norm = (orig_plot - zmin_h) / (zmax_h - zmin_h)
         fig.add_trace(go.Scatter(
             x=x_norm, y=depth_orig,
             mode='lines',
-            line=dict(color='black', width=1.2),
-            name=f'{prop} orig', showlegend=False,
-            hoverinfo='skip',
-        ), row=1, col=ci)
+            line=dict(color='black', width=1.1),
+            showlegend=False, hoverinfo='skip',
+        ), row=2, col=ci)
 
-        fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False,
-                         range=[0, 1], row=1, col=ci)
+        fig.update_xaxes(showticklabels=False, showgrid=False,
+                         zeroline=False, range=[0, 1], row=2, col=ci)
 
-    # Shared y axis: depth increasing downward
-    fig.update_yaxes(
-        autorange='reversed',
-        tickfont=dict(color=TEXT2, size=10),
-        gridcolor=GRID, linecolor=BORDER, zeroline=False,
-        title_text='Depth (m)',
-        row=1, col=1,
-    )
+    # ── Y axes ──────────────────────────────────────────────────────────────
+    fig.update_yaxes(autorange='reversed', tickfont=dict(color=TEXT2, size=10),
+                     gridcolor=GRID, linecolor=BORDER, zeroline=False,
+                     title_text='Depth (m)', row=2, col=1)
     for ci in range(2, n_props + 2):
         fig.update_yaxes(autorange='reversed', showticklabels=False,
-                         gridcolor=GRID, row=1, col=ci)
-
-    for ann in fig.layout.annotations:
-        ann.font.update(color=AMBER, size=11)
-        ann.bgcolor = PANEL
+                         gridcolor=GRID, row=2, col=ci)
+    # Row 1 y axes minimal
+    for ci in range(1, n_props + 2):
+        fig.update_yaxes(showticklabels=False, showgrid=False,
+                         zeroline=False, row=1, col=ci)
 
     phie_vp = _variance_preservation(df_zone['PHIE'].values, up['PHIE'].values)
 
     fig.update_layout(
-        **_base_layout(height=680),
+        **_base_layout(height=720),
         title=dict(
             text=(f'<b>Log vs Upscaled (Petrel Style) — Zone: {zone_name}  '
-                  f'|  N = {n_layers} layers</b><br>'
+                  f'|  N = {n_layers_actual} layers</b><br>'
                   f'<span style="font-size:12px;color:{GREEN}">'
                   f'PHIE Variance Preservation: {phie_vp:.1%}</span>'),
             font=dict(size=13, color=TEXT),
