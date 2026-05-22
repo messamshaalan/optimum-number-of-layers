@@ -64,9 +64,10 @@ def variogram_echart(lags, gamma, h_fit, g_fit, info: dict) -> dict:
     s = float(info.get('sill',  0))
     n = float(info.get('nugget',0))
     m = info.get('model', 'Spherical')
-    # Y-axis max: ensure sill line is always visible in chart area
-    g_arr = np.asarray(gamma, float)
-    y_max = max(float(np.max(g_arr)) if len(g_arr) else 0.001, float(s + n)) * 1.20
+    g_arr  = np.asarray(gamma, float)
+    sill_v = round(float(s + n), 9)
+    y_max  = max(float(np.max(g_arr)) if len(g_arr) else 0.001, sill_v) * 1.20
+    max_lag = float(max(lags)) if len(lags) else 20.0
     return {
         'backgroundColor': BG,
         'tooltip': EC_TOOLTIP,
@@ -89,26 +90,34 @@ def variogram_echart(lags, gamma, h_fit, g_fit, info: dict) -> dict:
                 'lineStyle': {'color': BLUE, 'width': 2.5},
                 'itemStyle': {'color': BLUE},
                 'symbol': 'none',
+            },
+            # Range vertical line — own series so {xAxis} is never paired with {yAxis}
+            {
+                'type': 'line', 'data': [], 'silent': True,
                 'markLine': {
                     'silent': True,
                     'symbol': ['none', 'none'],
-                    'lineStyle': {'type': 'dashed'},
-                    'data': [
-                        {
-                            'xAxis': r,
-                            'lineStyle': {'color': GREEN, 'width': 1.5, 'type': 'dashed'},
-                            'label': {'formatter': f'Range={r:.1f} m',
-                                      'color': GREEN, 'fontSize': 11,
-                                      'position': 'insideEndTop'},
-                        },
-                        {
-                            'yAxis': s + n,
-                            'lineStyle': {'color': RED, 'width': 1.5, 'type': 'dotted'},
-                            'label': {'formatter': f'Sill={s+n:.4f}',
-                                      'color': RED, 'fontSize': 10,
-                                      'position': 'insideEndTop'},
-                        },
-                    ],
+                    'lineStyle': {'color': GREEN, 'width': 1.5, 'type': 'dashed'},
+                    'label': {'show': True, 'formatter': f'Range={r:.1f} m',
+                              'color': GREEN, 'fontSize': 11, 'position': 'insideEndTop'},
+                    'data': [{'xAxis': r}],
+                },
+            },
+            # Sill horizontal line — drawn as a 2-point data series to avoid ECharts
+            # integer-truncation bug on {yAxis: small_float} in markLine shortcuts
+            {
+                'type': 'line',
+                'data': [[0.0, sill_v], [max_lag, sill_v]],
+                'lineStyle': {'color': RED, 'width': 1.5, 'type': 'dotted'},
+                'itemStyle': {'color': RED},
+                'symbol': 'none',
+                'showSymbol': False,
+                'silent': True,
+                'endLabel': {
+                    'show': True,
+                    'formatter': f'Sill={sill_v:.4f}',
+                    'color': RED,
+                    'fontSize': 10,
                 },
             },
         ],

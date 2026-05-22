@@ -255,7 +255,8 @@ def index():
                         petrel_upscaled_allzones(
                             WELLS, RESERVOIR_ZONES,
                             {z: S['n_layers'] for z in RESERVOIR_ZONES},
-                            S['log_well'], tops_df=wtops))
+                            S['log_well'], tops_df=wtops,
+                            props_to_show=show_p))
         else:
             df_z = _zone_df(S['log_well'], S['zone'])
             _set_plotly(charts['upscaled'],

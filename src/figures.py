@@ -757,9 +757,9 @@ def upscaled_comparison_figure(df_zone: pd.DataFrame, n_layers: int,
 def petrel_upscaled_allzones(
     wells: dict, zone_list: list, n_layers_dict: dict, well_name: str,
     tops_df: Optional[pd.DataFrame] = None,
+    props_to_show: Optional[List[str]] = None,
 ) -> go.Figure:
     """Petrel-style upscaled display — per-zone upscaling, combined depth view."""
-    from .analysis import upscale_zone as _uz
     df_well = wells.get(well_name, pd.DataFrame())
     if df_well.empty:
         return _empty_fig(f'No data for {well_name}')
@@ -769,7 +769,7 @@ def petrel_upscaled_allzones(
         zdf = df_well[df_well['ZONE'] == zone].copy()
         if zdf.empty:
             continue
-        up = _uz(zdf, n_layers_dict.get(zone, 10))
+        up = upscale_zone(zdf, n_layers_dict.get(zone, 10))
         if not up.empty:
             up_frames.append(up)
         zdf['_zone'] = zone
@@ -782,7 +782,8 @@ def petrel_upscaled_allzones(
     all_up  = pd.concat(up_frames,   ignore_index=True) if up_frames else pd.DataFrame()
     label   = ' + '.join(z.replace('_', ' ') for z in zone_list)
     return petrel_upscaled_figure(df_all, 0, label, _multi=True,
-                                  tops_df=tops_df, _pre_up=all_up)
+                                  tops_df=tops_df, _pre_up=all_up,
+                                  props_to_show=props_to_show)
 
 
 def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
@@ -803,6 +804,7 @@ def petrel_upscaled_figure(df_zone: pd.DataFrame, n_layers: int,
     # Use pre-built upscaled df (all-zones mode) or upscale from scratch
     if _pre_up is not None and not _pre_up.empty:
         up = _pre_up
+        n_layers_actual = len(up)
     else:
         n_layers_actual = max(1, n_layers if not _multi else max(5, n_layers))
         up = upscale_zone(df_zone, n_layers_actual)
