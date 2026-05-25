@@ -12,9 +12,11 @@
 //|   - LondonOpen requires all 3 TF agreement                       |
 //|   - Breakeven stop after 1R move in favour                       |
 //|   - Session-specific TP multipliers                               |
+//|   - Hard block on RANGING regime                                  |
+//|   - Daily loss limit and consecutive-loss circuit breaker         |
 //+------------------------------------------------------------------+
 #property copyright "XAUUSD-Backtest Project"
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -23,17 +25,31 @@
 input bool   InpUseRiskPercent = false;  // true = risk % of balance | false = fixed USD
 input double InpRiskPercent    = 1.0;    // Risk % of account balance (if UseRiskPercent=true)
 input double InpRiskUSD        = 100.0;  // Fixed risk per trade USD (if UseRiskPercent=false)
-input int    InpATRPeriod     = 14;      // ATR period (5M chart)
-input double InpSLATRMult    = 1.5;     // SL = entry ± SLMult × ATR
-input double InpBaseRR        = 2.5;     // Base reward/risk ratio
-input int    InpEMAPeriod     = 50;      // EMA period for trend filter (15M)
-input int    InpADXPeriod     = 14;      // ADX period (15M)
-input double InpADXTrend      = 25.0;   // ADX > this → TRENDING
-input double InpADXRange      = 20.0;   // ADX < this → RANGING
-input double InpMinConfidence = 0.72;   // Minimum confluence score to trade
-input double InpPinRatio      = 2.0;    // Min wick/body ratio for pin bar
-input double InpPinBodyPct    = 0.30;   // Max body/total_range for pin bar
-input int    InpMagicNumber   = 202600; // EA magic number
+
+//--- Core indicator periods
+input int    InpATRPeriod      = 14;     // ATR period (5M chart)
+input int    InpEMAPeriod      = 50;     // EMA period for trend filter (15M)
+input int    InpADXPeriod      = 14;     // ADX period (15M)
+
+//--- ATR-based SL/TP
+input double InpSLATRMult      = 1.5;   // SL = entry ± SLMult × ATR
+input double InpBaseRR         = 2.5;   // Base reward/risk ratio
+
+//--- ADX regime thresholds
+input double InpADXTrend       = 25.0;  // ADX > this → TRENDING
+input double InpADXRange       = 20.0;  // ADX < this → RANGING
+
+//--- Signal quality
+input double InpMinConfidence  = 0.72;  // Minimum confluence score to trade
+input double InpPinRatio       = 2.0;   // Min wick/body ratio for pin bar
+input double InpPinBodyPct     = 0.30;  // Max body/total_range for pin bar
+
+//--- Regime guards
+input bool   InpBlockRanging   = true;  // Hard-block all entries when ADX < ADXRange
+
+//--- Daily risk controls
+input int    InpMaxConsecLosses = 4;    // Pause rest of day after N consecutive SL hits
+input double InpMaxDailyLossPC  = 3.0; // Stop trading today if equity falls this % intraday
 
 //--- Session max trades per day
 input int InpMaxAsia        = 8;
@@ -47,15 +63,18 @@ input int InpCooldownLondonOpen = 45;
 input int InpCooldownLondon     = 30;
 input int InpCooldownOverlap    = 30;
 
-//--- Session TP multipliers (× ATR, on top of base RR)
+//--- Session TP multipliers (× ATR)
 input double InpTPAsia        = 3.5;
 input double InpTPLondonOpen  = 2.0;
 input double InpTPLondon      = 2.5;
 input double InpTPOverlap     = 3.0;
 
 //--- Regime TP adjustment
-input double InpRegimeTrendBonus  = 0.20;  // +20% TP when TRENDING
-input double InpRegimeRangePenalty= 0.10;  // -10% TP when RANGING
+input double InpRegimeTrendBonus   = 0.20;  // +20% TP when TRENDING
+input double InpRegimeRangePenalty = 0.10;  // -10% TP when RANGING
+
+//--- EA identity
+input int InpMagicNumber = 202600;
 
 //--- Global handles
 int g_atr_h  = INVALID_HANDLE;
@@ -69,17 +88,21 @@ CTrade g_trade;
 datetime g_last_bar = 0;
 
 //--- Session daily trade counters (reset each new day)
-int g_cnt_asia        = 0;
-int g_cnt_londonopen  = 0;
-int g_cnt_london      = 0;
-int g_cnt_overlap     = 0;
+int      g_cnt_asia       = 0;
+int      g_cnt_londonopen = 0;
+int      g_cnt_london     = 0;
+int      g_cnt_overlap    = 0;
 datetime g_last_reset_day = 0;
 
 //--- Session cooldown timestamps
-datetime g_last_trade_asia        = 0;
-datetime g_last_trade_londonopen  = 0;
-datetime g_last_trade_london      = 0;
-datetime g_last_trade_overlap     = 0;
+datetime g_last_trade_asia       = 0;
+datetime g_last_trade_londonopen = 0;
+datetime g_last_trade_london     = 0;
+datetime g_last_trade_overlap    = 0;
+
+//--- Daily risk tracking
+int    g_consec_losses    = 0;    // consecutive SL hits today
+double g_day_start_equity = 0.0; // equity at start of trading day
 
 //--- Regime strings
 #define REGIME_TRENDING      "TRENDING"
@@ -112,7 +135,11 @@ int OnInit()
     g_trade.SetDeviationInPoints(20);
     g_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-    Print("XAUUSD PA EA initialized");
+    g_day_start_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+    Print("XAUUSD PA EA v1.02 initialized | BlockRanging=", InpBlockRanging,
+          " | MaxConsecLosses=", InpMaxConsecLosses,
+          " | MaxDailyLoss=", InpMaxDailyLossPC, "%");
     return INIT_SUCCEEDED;
 }
 
@@ -122,6 +149,39 @@ void OnDeinit(const int reason)
     IndicatorRelease(g_atr_h);
     IndicatorRelease(g_ema_h);
     IndicatorRelease(g_adx_h);
+}
+
+//+------------------------------------------------------------------+
+//| Trade transaction handler — tracks consecutive losses             |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest      &request,
+                        const MqlTradeResult       &result)
+{
+    if(trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+
+    if(!HistoryDealSelect(trans.deal)) return;
+    if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC) != InpMagicNumber) return;
+    if(HistoryDealGetString(trans.deal, DEAL_SYMBOL) != _Symbol) return;
+
+    ENUM_DEAL_ENTRY entry_type = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+    if(entry_type != DEAL_ENTRY_OUT) return;  // only count closing deals
+
+    double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
+                  + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
+                  + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+
+    if(profit < 0.0)
+    {
+        g_consec_losses++;
+        Print("Consecutive losses: ", g_consec_losses, "/", InpMaxConsecLosses);
+        if(g_consec_losses >= InpMaxConsecLosses)
+            Print("Circuit breaker triggered — no new trades for rest of day");
+    }
+    else
+    {
+        g_consec_losses = 0;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -137,6 +197,17 @@ void OnTick()
 
     //--- Reset daily counters on new day
     ResetDailyCounters();
+
+    //--- Circuit breaker: consecutive losses
+    if(g_consec_losses >= InpMaxConsecLosses) return;
+
+    //--- Circuit breaker: daily drawdown
+    if(GetDailyDrawdownPC() >= InpMaxDailyLossPC)
+    {
+        Print("Daily loss limit reached (", DoubleToString(GetDailyDrawdownPC(), 2),
+              "%) — no new trades today");
+        return;
+    }
 
     //--- Get current UTC time
     MqlDateTime dt;
@@ -154,7 +225,7 @@ void OnTick()
     //--- Check session cooldown
     if(!CooldownClear(session)) return;
 
-    //--- Require at least 30 bars on M5 for indicator warmup
+    //--- Require at least 50 bars on M5 for indicator warmup
     if(iBars(_Symbol, PERIOD_M5) < 50) return;
 
     //--- Read indicators
@@ -167,10 +238,13 @@ void OnTick()
     //--- Regime
     string regime = ClassifyRegime(adx_val);
 
+    //--- Hard block on RANGING regime
+    if(InpBlockRanging && regime == REGIME_RANGING) return;
+
     //--- Price-action votes per timeframe
-    int vote15m = 0, vote5m = 0, vote1m = 0;
+    int    vote15m = 0, vote5m = 0, vote1m = 0;
     double qual15m = 0, qual5m = 0, qual1m = 0;
-    string pat15m = "", pat5m = "", pat1m = "";
+    string pat15m  = "", pat5m = "", pat1m = "";
 
     GetPAVote(PERIOD_M15, ema_val, vote15m, qual15m, pat15m);
     GetPAVote(PERIOD_M5,  ema_val, vote5m,  qual5m,  pat5m);
@@ -180,20 +254,20 @@ void OnTick()
     int bull = (vote15m == 1 ? 1 : 0) + (vote5m == 1 ? 1 : 0) + (vote1m == 1 ? 1 : 0);
     int bear = (vote15m == -1 ? 1 : 0) + (vote5m == -1 ? 1 : 0) + (vote1m == -1 ? 1 : 0);
 
-    int agree  = 0;
-    int dir    = 0;  // 1 = BUY, -1 = SELL, 0 = no signal
+    int    agree    = 0;
+    int    dir      = 0;   // 1 = BUY, -1 = SELL, 0 = no signal
     double avg_qual = 0;
 
     if(bull > bear && bull >= 1)
     {
-        dir    = 1;
-        agree  = bull;
+        dir      = 1;
+        agree    = bull;
         avg_qual = ((vote15m==1?qual15m:0) + (vote5m==1?qual5m:0) + (vote1m==1?qual1m:0)) / agree;
     }
     else if(bear > bull && bear >= 1)
     {
-        dir    = -1;
-        agree  = bear;
+        dir      = -1;
+        agree    = bear;
         avg_qual = ((vote15m==-1?qual15m:0) + (vote5m==-1?qual5m:0) + (vote1m==-1?qual1m:0)) / agree;
     }
 
@@ -226,7 +300,7 @@ void OnTick()
         ? AccountInfoDouble(ACCOUNT_BALANCE) * InpRiskPercent / 100.0
         : InpRiskUSD;
     double contract_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-    if(contract_size <= 0) contract_size = 100.0;  // standard XAUUSD lot = 100 oz
+    if(contract_size <= 0) contract_size = 100.0;
     double sl_dist_usd = sl_dist * contract_size;
     if(sl_dist_usd <= 0) return;
     double lots = NormalizeDouble(risk_usd / sl_dist_usd, 2);
@@ -257,6 +331,17 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
+//| Returns intraday equity drawdown as a percentage                  |
+//+------------------------------------------------------------------+
+double GetDailyDrawdownPC()
+{
+    if(g_day_start_equity <= 0) return 0.0;
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double drop   = g_day_start_equity - equity;
+    return (drop / g_day_start_equity) * 100.0;
+}
+
+//+------------------------------------------------------------------+
 //| Classify session from UTC hour                                    |
 //+------------------------------------------------------------------+
 string GetSession(int h)
@@ -275,23 +360,21 @@ string GetSession(int h)
 string ClassifyRegime(double adx_val)
 {
     if(adx_val > InpADXTrend) return REGIME_TRENDING;
-    if(adx_val < InpADXRange)  return REGIME_RANGING;
+    if(adx_val < InpADXRange) return REGIME_RANGING;
     return REGIME_TRANSITIONING;
 }
 
 //+------------------------------------------------------------------+
 //| Detect PA pattern and return directional vote                     |
-//| vote: 1=BUY, -1=SELL, 0=none   qual: 0.0–1.0                    |
+//| vote: 1=BUY, -1=SELL, 0=none   qual: 0.0-1.0                    |
 //+------------------------------------------------------------------+
 void GetPAVote(ENUM_TIMEFRAMES tf, double ema15m,
                int &vote, double &qual, string &pat)
 {
     vote = 0; qual = 0.0; pat = "";
 
-    //--- Need at least 3 closed bars
     if(iBars(_Symbol, tf) < 4) return;
 
-    //--- Bar 1 = last closed, bar 2 = one before that
     double o1 = iOpen (_Symbol, tf, 1);
     double h1 = iHigh (_Symbol, tf, 1);
     double l1 = iLow  (_Symbol, tf, 1);
@@ -302,12 +385,13 @@ void GetPAVote(ENUM_TIMEFRAMES tf, double ema15m,
     double l2 = iLow  (_Symbol, tf, 2);
     double c2 = iClose(_Symbol, tf, 2);
 
-    bool bull_pin1 = IsBullPinBar(o1, h1, l1, c1, qual);
-    bool bear_pin1 = IsBearPinBar(o1, h1, l1, c1, qual);
-    bool bull_pin2 = IsBullPinBar(o2, h2, l2, c2, qual);
-    bool bear_pin2 = IsBearPinBar(o2, h2, l2, c2, qual);
+    double dummy_q = 0;
+    bool bull_pin1 = IsBullPinBar(o1, h1, l1, c1, dummy_q);
+    bool bear_pin1 = IsBearPinBar(o1, h1, l1, c1, dummy_q);
+    bool bull_pin2 = IsBullPinBar(o2, h2, l2, c2, dummy_q);
+    bool bear_pin2 = IsBearPinBar(o2, h2, l2, c2, dummy_q);
 
-    double q_eng = 0;
+    double q_eng  = 0;
     bool bull_eng = IsBullEngulfing(o2, h2, l2, c2, o1, h1, l1, c1, q_eng);
     bool bear_eng = IsBearEngulfing(o2, h2, l2, c2, o1, h1, l1, c1, q_eng);
 
@@ -316,25 +400,35 @@ void GetPAVote(ENUM_TIMEFRAMES tf, double ema15m,
 
     if(!has_bull && !has_bear) return;
 
-    //--- Quality: best signal on this TF
-    double best_q = 0;
+    double best_q  = 0;
     string best_pat = "";
     int    raw_vote = 0;
 
-    if(bull_pin1 || bull_pin2) { double q; IsBullPinBar(bull_pin1?o1:o2, bull_pin1?h1:h2, bull_pin1?l1:l2, bull_pin1?c1:c2, q); if(q > best_q){ best_q=q; raw_vote=1; best_pat="pin_bar"; } }
-    if(bear_pin1 || bear_pin2) { double q; IsBearPinBar(bear_pin1?o1:o2, bear_pin1?h1:h2, bear_pin1?l1:l2, bear_pin1?c1:c2, q); if(q > best_q){ best_q=q; raw_vote=-1; best_pat="pin_bar"; } }
-    if(bull_eng) { if(q_eng > best_q){ best_q=q_eng; raw_vote=1; best_pat="engulfing"; } }
-    if(bear_eng) { if(q_eng > best_q){ best_q=q_eng; raw_vote=-1; best_pat="engulfing"; } }
+    if(bull_pin1 || bull_pin2)
+    {
+        double q = 0;
+        IsBullPinBar(bull_pin1 ? o1 : o2, bull_pin1 ? h1 : h2,
+                     bull_pin1 ? l1 : l2, bull_pin1 ? c1 : c2, q);
+        if(q > best_q) { best_q = q; raw_vote = 1; best_pat = "pin_bar"; }
+    }
+    if(bear_pin1 || bear_pin2)
+    {
+        double q = 0;
+        IsBearPinBar(bear_pin1 ? o1 : o2, bear_pin1 ? h1 : h2,
+                     bear_pin1 ? l1 : l2, bear_pin1 ? c1 : c2, q);
+        if(q > best_q) { best_q = q; raw_vote = -1; best_pat = "pin_bar"; }
+    }
+    if(bull_eng && q_eng > best_q) { best_q = q_eng; raw_vote = 1;  best_pat = "engulfing"; }
+    if(bear_eng && q_eng > best_q) { best_q = q_eng; raw_vote = -1; best_pat = "engulfing"; }
 
     if(raw_vote == 0) return;
 
     //--- EMA50 trend filter (only applied to M15 vote)
     if(tf == PERIOD_M15)
     {
-        double close_m15 = c1;
-        bool above_ema = (close_m15 > ema15m);
-        if(raw_vote == 1 && !above_ema) return;
-        if(raw_vote == -1 && above_ema) return;
+        bool above_ema = (c1 > ema15m);
+        if(raw_vote ==  1 && !above_ema) return;
+        if(raw_vote == -1 &&  above_ema) return;
     }
 
     vote = raw_vote;
@@ -351,8 +445,7 @@ bool IsBullPinBar(double o, double h, double l, double c, double &qual)
     double total      = h - l;
     if(total < 1e-9) return false;
     double lower_wick = MathMin(o, c) - l;
-    double body_pct   = body / total;
-    if(body_pct > InpPinBodyPct) return false;
+    if((body / total) > InpPinBodyPct) return false;
     if(lower_wick < InpPinRatio * MathMax(body, 0.001)) return false;
     qual = MathMin(lower_wick / total, 1.0);
     return true;
@@ -364,8 +457,7 @@ bool IsBearPinBar(double o, double h, double l, double c, double &qual)
     double total      = h - l;
     if(total < 1e-9) return false;
     double upper_wick = h - MathMax(o, c);
-    double body_pct   = body / total;
-    if(body_pct > InpPinBodyPct) return false;
+    if((body / total) > InpPinBodyPct) return false;
     if(upper_wick < InpPinRatio * MathMax(body, 0.001)) return false;
     qual = MathMin(upper_wick / total, 1.0);
     return true;
@@ -378,11 +470,10 @@ bool IsBullEngulfing(double o1, double h1, double l1, double c1,
                      double o2, double h2, double l2, double c2,
                      double &qual)
 {
-    // bar1 = prior (bearish), bar2 = current (bullish engulfing)
-    if(c1 >= o1) return false;          // prior must be bearish
-    if(c2 <= o2) return false;          // current must be bullish
-    if(c2 < MathMax(o1,c1)) return false;
-    if(o2 > MathMin(o1,c1)) return false;
+    if(c1 >= o1) return false;
+    if(c2 <= o2) return false;
+    if(c2 < MathMax(o1, c1)) return false;
+    if(o2 > MathMin(o1, c1)) return false;
     double body1 = MathAbs(c1 - o1);
     double body2 = MathAbs(c2 - o2);
     if(body2 <= body1) return false;
@@ -394,10 +485,10 @@ bool IsBearEngulfing(double o1, double h1, double l1, double c1,
                      double o2, double h2, double l2, double c2,
                      double &qual)
 {
-    if(c1 <= o1) return false;          // prior must be bullish
-    if(c2 >= o2) return false;          // current must be bearish
-    if(c2 > MathMin(o1,c1)) return false;
-    if(o2 < MathMax(o1,c1)) return false;
+    if(c1 <= o1) return false;
+    if(c2 >= o2) return false;
+    if(c2 > MathMin(o1, c1)) return false;
+    if(o2 < MathMax(o1, c1)) return false;
     double body1 = MathAbs(c1 - o1);
     double body2 = MathAbs(c2 - o2);
     if(body2 <= body1) return false;
@@ -416,32 +507,24 @@ void ManageBreakeven()
         if(!PositionSelectByTicket(ticket)) continue;
         if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
 
-        double entry   = PositionGetDouble(POSITION_PRICE_OPEN);
-        double cur_sl  = PositionGetDouble(POSITION_SL);
-        double cur_tp  = PositionGetDouble(POSITION_TP);
+        double entry  = PositionGetDouble(POSITION_PRICE_OPEN);
+        double cur_sl = PositionGetDouble(POSITION_SL);
+        double cur_tp = PositionGetDouble(POSITION_TP);
         double cur_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
         double cur_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
         ENUM_POSITION_TYPE ptype = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-        double sl_dist = MathAbs(cur_tp - entry) / InpBaseRR;  // reconstruct original sl_dist
+        double sl_dist = MathAbs(cur_tp - entry) / InpBaseRR;
 
         if(ptype == POSITION_TYPE_BUY)
         {
-            double breakeven_trigger = entry + sl_dist;
-            if(cur_bid >= breakeven_trigger && cur_sl < entry)
-            {
-                double new_sl = NormalizeDouble(entry + _Point, _Digits);
-                g_trade.PositionModify(ticket, new_sl, cur_tp);
-            }
+            if(cur_bid >= entry + sl_dist && cur_sl < entry)
+                g_trade.PositionModify(ticket, NormalizeDouble(entry + _Point, _Digits), cur_tp);
         }
-        else  // SELL
+        else
         {
-            double breakeven_trigger = entry - sl_dist;
-            if(cur_ask <= breakeven_trigger && cur_sl > entry)
-            {
-                double new_sl = NormalizeDouble(entry - _Point, _Digits);
-                g_trade.PositionModify(ticket, new_sl, cur_tp);
-            }
+            if(cur_ask <= entry - sl_dist && cur_sl > entry)
+                g_trade.PositionModify(ticket, NormalizeDouble(entry - _Point, _Digits), cur_tp);
         }
     }
 }
@@ -487,7 +570,12 @@ void ResetDailyCounters()
 
     g_cnt_asia = g_cnt_londonopen = g_cnt_london = g_cnt_overlap = 0;
     g_last_trade_asia = g_last_trade_londonopen = g_last_trade_london = g_last_trade_overlap = 0;
-    Print("Daily counters reset for ", TimeToString(day_start, TIME_DATE));
+
+    //--- Reset daily risk trackers
+    g_consec_losses    = 0;
+    g_day_start_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+    Print("Daily reset | equity=", DoubleToString(g_day_start_equity, 2));
 }
 
 double GetTPMultiplier(const string &session)

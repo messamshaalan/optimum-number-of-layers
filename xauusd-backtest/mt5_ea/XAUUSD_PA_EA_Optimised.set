@@ -1,25 +1,23 @@
-; XAUUSD_PA_EA — Optimised settings
-; Derived from 2016-2019 Python backtester results
+; XAUUSD_PA_EA v1.02 — Optimised settings
+; Based on 2016-2019 Python backtest + live test report analysis
 ;
-; Key findings that drove these values:
-;   - Asia/TRENDING pin bars: 3,018 trades, 52.0% win rate (dominant edge)
-;   - LondonOpen strict 3/3 TF filter cut false signals dramatically → cap=2
-;   - SL=1.5×ATR kept losses manageable across all regimes
-;   - Session TP multipliers (Asia 3.5, LO 2.0, Lon 2.5, OL 3.0) maximised
-;     profit factor per session volatility profile
-;   - Confidence threshold 0.72 removed weak single-TF signals without
-;     over-filtering (2/3 and 3/3 TF agreement passed cleanly)
-;   - ADX 25/20 thresholds matched gold's historical trending behaviour
-;   - 1% risk keeps drawdown survivable through the worst losing streaks
-;     seen in backtesting (max 10 consecutive losses → 9.6% DD)
+; Test report findings that drove changes:
+;   - Win rate was 27% (vs 52% on synthetic data)
+;     → real XAUUSD has more noise; tighten entry criteria
+;   - 53% max drawdown; 23 consecutive losses
+;     → RANGING regime was being traded; hard block added
+;   - Profit factor 1.01 (barely alive)
+;     → SL too tight (1.5xATR) — widened to 2.0 to survive tick noise
+;   - 1,441 trades — over-trading on low-quality signals
+;     → session caps halved, cooldowns extended
 ;
-; Chart: XAUUSD M5
-; Broker time must expose GMT so TimeGMT() works correctly.
+; Target: win rate ~38-42%, profit factor ~1.30+, max DD < 25%
 
 [expert]
 
 [inputs]
 ; ── Risk sizing ──────────────────────────────────────────────────
+; Use 1% of balance — scales automatically as account grows/shrinks
 InpUseRiskPercent=true
 InpRiskPercent=1.0
 InpRiskUSD=100.0
@@ -30,59 +28,71 @@ InpEMAPeriod=50
 InpADXPeriod=14
 
 ; ── ATR-based SL/TP ──────────────────────────────────────────────
-; SL = 1.5 × ATR  (tight enough to cut losers, wide enough to breathe)
-; Base RR used only for fallback sessions (not Asia/LO/London/Overlap)
-InpSLATRMult=1.5
+; Widened from 1.5 to 2.0: real XAUUSD tick noise was clipping the
+; 1.5x SL before moves developed. 2.0x gives trades room to breathe.
+; TP is set per-session (below), not by BaseRR; BaseRR only used as
+; fallback for unlisted sessions.
+InpSLATRMult=2.0
 InpBaseRR=2.5
 
 ; ── ADX regime thresholds ────────────────────────────────────────
-; Gold trends sharply — 25 is the industry-standard pivot.
-; Below 20 mean-reversion filter kicks in (TP shrinks 10%).
-InpADXTrend=25.0
+; Raised trend threshold to 28 — only trade in clearly trending markets.
+; Range threshold kept at 20; combined with BlockRanging=true this
+; means we only trade when ADX >= 28 (TRENDING only, no TRANSITIONING).
+; If you want TRANSITIONING trades too, lower ADXTrend back to 25.
+InpADXTrend=28.0
 InpADXRange=20.0
 
-; ── Confluence / pattern thresholds ─────────────────────────────
-; 0.72 passes 2/3-TF and 3/3-TF signals; rejects 1/3-TF noise.
-InpMinConfidence=0.72
-; 2.0 wick/body ratio for pin bars (standard; tighter = fewer but cleaner signals)
-InpPinRatio=2.0
-; Body must be ≤30% of total candle range to qualify as a pin bar
-InpPinBodyPct=0.30
+; ── Regime guards (NEW in v1.02) ─────────────────────────────────
+; Hard block all entries when ADX < 20 (ranging conditions).
+; This was the single biggest cause of losing streaks in the live test.
+InpBlockRanging=true
+
+; ── Daily risk controls (NEW in v1.02) ───────────────────────────
+; Stop trading after 4 consecutive SL hits — likely a regime shift.
+; Stop trading for the day if equity drops 3% intraday.
+InpMaxConsecLosses=4
+InpMaxDailyLossPC=3.0
+
+; ── Signal quality ───────────────────────────────────────────────
+; Raised confidence from 0.72 to 0.80:
+;   0.72 allowed weak 2/3-TF signals with low quality score through.
+;   0.80 requires either strong 2/3-TF quality OR any 3/3-TF agreement.
+InpMinConfidence=0.80
+; Stricter pin bars: wick must be 2.5x the body (was 2.0x)
+InpPinRatio=2.5
+; Stricter pin bars: body must be ≤22% of range (was 30%)
+InpPinBodyPct=0.22
 
 ; ── Session TP multipliers (× ATR) ──────────────────────────────
-; Asia: wide targets — low volatility means clean trends, price drifts to target
-InpTPAsia=3.5
-; LondonOpen: tight — explosive but short-lived moves; take profit quickly
+; Multiplied by wider SL (2.0x) these still give good net RR:
+;   Asia:        4.0 / 2.0 = 2.0 R net
+;   LondonOpen:  2.0 / 2.0 = 1.0 R net  (volatile — tight target)
+;   London:      3.0 / 2.0 = 1.5 R net
+;   Overlap:     3.5 / 2.0 = 1.75 R net
+InpTPAsia=4.0
 InpTPLondonOpen=2.0
-; London: moderate — sustained directional flow after open spike settles
-InpTPLondon=2.5
-; Overlap: slightly wider — dual-session liquidity extends moves
-InpTPOverlap=3.0
+InpTPLondon=3.0
+InpTPOverlap=3.5
 
 ; ── Regime TP adjustments ────────────────────────────────────────
-; +20% TP in trending conditions; -10% in ranging (protect against fades)
 InpRegimeTrendBonus=0.20
 InpRegimeRangePenalty=0.10
 
 ; ── Session daily trade caps ─────────────────────────────────────
-; Asia: generous — best session by win rate; allow up to 8 setups/day
-InpMaxAsia=8
-; LondonOpen: strict — only the highest-confluence setups survive the 3/3 filter
-InpMaxLondonOpen=2
-; London: moderate
-InpMaxLondon=3
-; Overlap: moderate — dual-session vol can produce whipsaws after cap
-InpMaxOverlap=3
+; Halved from previous settings — fewer but higher quality entries.
+; Asia remains primary session (best edge in backtesting).
+InpMaxAsia=4
+InpMaxLondonOpen=1
+InpMaxLondon=2
+InpMaxOverlap=1
 
 ; ── Session cooldown minutes ─────────────────────────────────────
-; Asia: 15 min — enough spacing to avoid chasing the same move twice
-InpCooldownAsia=15
-; LondonOpen: 45 min — open spike needs time to settle before next signal
-InpCooldownLondonOpen=45
-; London: 30 min
-InpCooldownLondon=30
-; Overlap: 30 min
-InpCooldownOverlap=30
+; Extended to force patience between entries.
+InpCooldownAsia=30
+InpCooldownLondonOpen=60
+InpCooldownLondon=45
+InpCooldownOverlap=60
 
 ; ── EA identity ──────────────────────────────────────────────────
 InpMagicNumber=202600
