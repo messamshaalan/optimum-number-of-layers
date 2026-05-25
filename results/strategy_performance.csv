@@ -1,0 +1,10 @@
+strategy,is_best,trades,wins,losses,win_rate,profit_factor,total_pnl,avg_r,sharpe
+Price_Action,True,3327,2027,1027,0.6092,3.523,294696.98,0.9773,14.907
+MACD,False,1715,1034,451,0.6023,3.928,159926.19,1.0567,11.605
+RSI,False,11,8,2,0.7273,5.333,1300.0,1.4545,13.388
+ATR_Breakout,False,8,5,2,0.625,3.333,700.0,1.25,8.946
+Stochastic,False,5,2,2,0.4,1.333,100.0,0.4,1.932
+London_Breakout,False,3,0,2,0.0,0.286,-52.21,-0.8404,-5.903
+Fibonacci,False,1,0,1,0.0,0.0,-100.0,-1.0,0.0
+SR_Bounce,False,33,8,19,0.2424,0.643,-900.0,-0.4545,-3.499
+Bollinger,False,24,3,18,0.125,0.286,-1500.0,-0.875,-9.789
