@@ -14,8 +14,8 @@ RISK_PER_TRADE = 0.01        # 1% of INITIAL capital per trade (fixed dollar ris
 MAX_CONCURRENT_TRADES = 3
 MAX_DAILY_TRADES = 5         # maximum trades placed per day
 RISK_REWARD = 2.0            # min R:R ratio
-SL_ATR_MULT = 1.5            # SL = 1.5 x ATR(5M)
-TP_ATR_MULT = 3.0            # TP = 3.0 x ATR(5M)
+SL_ATR_MULT = 1.5            # SL = 1.5 × ATR(5M)
+TP_ATR_MULT = 3.0            # TP = 3.0 × ATR(5M)
 SPREAD_USD = 0.30            # $0.30/oz spread
 
 # Date ranges
@@ -27,8 +27,8 @@ DATA_START     = "2015-10-01"   # extra warm-up data
 DATA_END       = "2020-12-31"
 
 # Signal confluence
-CONFLUENCE_THRESHOLD = 0.72
-HIGH_CONF_THRESHOLD  = 0.88
+CONFLUENCE_THRESHOLD = 0.72   # minimum weighted-vote score to enter (strict)
+HIGH_CONF_THRESHOLD  = 0.88   # above this → 1.5× position size
 
 # Indicator defaults
 EMA_FAST   = 8
@@ -62,13 +62,23 @@ SESSION_VOL_MULT = {
 }
 
 # Learning parameters
-ROLLING_WINDOW = 20
-WEIGHT_BOOST   = 1.05
-WEIGHT_CUT     = 0.90
+ROLLING_WINDOW = 20          # days for rolling Sharpe
+WEIGHT_BOOST   = 1.05        # multiply weight when performing well
+WEIGHT_CUT     = 0.90        # multiply weight when underperforming
 MIN_WEIGHT     = 0.10
 MAX_WEIGHT     = 2.00
-SUSPEND_AFTER_LOSSES = 10
-SUSPEND_DAYS   = 5
+SUSPEND_AFTER_LOSSES = 10    # consecutive losses before suspension
+SUSPEND_DAYS   = 5           # suspension length
+
+# Regime detection
+ADX_TREND_THRESHOLD = 25.0   # ADX above this → TRENDING
+ADX_RANGE_THRESHOLD = 20.0   # ADX below this → RANGING
+
+# Session-aware learning
+SESSION_MIN_SAMPLES = 15     # trades required before session multiplier activates
+
+# Tick generator
+TICK_FREQ = "10s"            # resolution of Heston tick simulation
 
 # Instrument
-TICKER = "GC=F"              # Gold futures (COMEX) -- close to spot XAUUSD
+TICKER = "GC=F"              # Gold futures (COMEX) — very close to spot XAUUSD
