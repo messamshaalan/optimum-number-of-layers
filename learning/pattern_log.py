@@ -28,21 +28,18 @@ class PatternLog:
         self._log: List[dict] = []
         self.session_tracker = session_tracker
 
-    # ------------------------------------------------------------------ #
     def update_weights(self,
                        strategies: List[BaseStrategy],
                        result: DailyResult,
                        trades: list = None) -> None:
         today = result.trading_date
 
-        # --- Record per-session outcomes in SessionTracker ---
         if self.session_tracker and trades:
             for t in trades:
                 if not t.is_open and t.exit_reason in ("TP", "SL"):
                     won = (t.exit_reason == "TP")
                     self.session_tracker.record(t.strategy, t.session, won)
 
-        # --- Strategy weight update (unchanged logic) ---
         for strat in strategies:
             sr      = result.strategy_results.get(strat.name)
             day_pnl = sr.total_pnl if sr else 0.0
@@ -73,7 +70,6 @@ class PatternLog:
                                         f"SUSPENDED for {config.SUSPEND_DAYS} days after "
                                         f"{config.SUSPEND_AFTER_LOSSES} consecutive losses")
 
-    # ------------------------------------------------------------------ #
     def append_log(self, day: date, result: DailyResult) -> None:
         entry = {
             "date":         str(day),
@@ -105,7 +101,6 @@ class PatternLog:
                 "new": round(new, 3), "reason": reason,
             })
 
-    # ------------------------------------------------------------------ #
     def save(self) -> None:
         with open(_LOG_PATH, "w") as f:
             json.dump(self._log, f, indent=2)

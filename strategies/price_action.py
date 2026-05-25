@@ -22,7 +22,6 @@ import config
 
 class PriceActionStrategy(BaseStrategy):
     name = "Price_Action"
-    # Trades in all regimes but adjusts TP and confidence accordingly
     regime_preferences = [TRENDING, RANGING, TRANSITIONING]
 
     def generate_signal(self, tf1m, tf5m, tf15m, timestamp) -> Signal:
@@ -30,12 +29,9 @@ class PriceActionStrategy(BaseStrategy):
             return self._no_signal()
 
         entry = float(tf1m["Close"].iloc[-1])
-
-        # --- Regime & session ---
         regime  = classify_regime(tf15m)
         session = _hour_to_session(timestamp.hour)
 
-        # --- Multi-timeframe pattern voting ---
         votes   = {}
         quality = {}
 
@@ -67,7 +63,6 @@ class PriceActionStrategy(BaseStrategy):
                 votes[label]   = "NONE"
                 quality[label] = 0.0
 
-        # --- EMA 50 trend filter on 15 M ---
         if len(tf15m) >= 55:
             e50   = ema(tf15m["Close"], config.EMA_TREND)
             trend = "BUY" if entry > float(e50.iloc[-1]) else "SELL"
@@ -83,19 +78,13 @@ class PriceActionStrategy(BaseStrategy):
                            config.ATR_PERIOD).iloc[-1])
         sl, tp = _sl_tp(entry, direction, atr5, regime)
         conf   = _confidence(votes, direction, self.weight, quality, regime)
-
-        # Session multiplier from learned history
-        conf = min(conf * self.session_multiplier(session), 1.0)
+        conf   = min(conf * self.session_multiplier(session), 1.0)
 
         sig         = Signal(direction, conf, entry, sl, tp, self.name, votes, atr5)
         sig.regime  = regime
         sig.session = session
         return sig
 
-
-# ------------------------------------------------------------------ #
-# Helpers
-# ------------------------------------------------------------------ #
 
 def _dominant(votes: dict) -> str:
     buy  = sum(1 for v in votes.values() if v == "BUY")
@@ -107,7 +96,6 @@ def _dominant(votes: dict) -> str:
 
 def _sl_tp(entry: float, direction: str, atr5: float, regime: str):
     sl_mult = config.SL_ATR_MULT
-    # Trending: let profits run (+20 % TP). Ranging: tighter TP (-10 %).
     tp_mult = config.TP_ATR_MULT * (1.2 if regime == TRENDING
                                     else 0.9 if regime == RANGING
                                     else 1.0)
@@ -121,19 +109,14 @@ def _confidence(votes: dict, direction: str, weight: float,
     agree    = sum(1 for v in votes.values() if v == direction)
     avg_qual = (sum(quality.get(k, 0.0) for k, v in votes.items() if v == direction)
                 / max(agree, 1))
-
     base = min(0.45 + 0.20 * agree, 1.0)
-    base = min(base + 0.10 * avg_qual, 1.0)   # quality bonus ≤ +0.10
-
-    # Reduce conviction in transitioning regime
+    base = min(base + 0.10 * avg_qual, 1.0)
     if regime == TRANSITIONING:
         base *= 0.90
-
     return base * min(weight, 1.0)
 
 
 def _pattern_quality(df: pd.DataFrame) -> float:
-    """Score 0–1: 1.0 for ideal pin bar or engulfing, lower for mediocre patterns."""
     if len(df) < 1:
         return 0.5
     bar   = df.iloc[-1]
@@ -143,12 +126,10 @@ def _pattern_quality(df: pd.DataFrame) -> float:
     body     = abs(bar["Close"] - bar["Open"])
     body_pct = body / total
     if body_pct < 0.30:
-        # Pin bar: reward tiny body with large wick
         return 1.0 - body_pct / 0.30 * 0.25
     if body_pct > 0.60:
-        # Engulfing: reward large body
         return (body_pct - 0.60) / 0.40
-    return 0.30   # mediocre
+    return 0.30
 
 
 def _hour_to_session(hour: int) -> str:
