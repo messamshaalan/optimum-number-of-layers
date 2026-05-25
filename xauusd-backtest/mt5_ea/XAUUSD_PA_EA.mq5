@@ -14,13 +14,15 @@
 //|   - Session-specific TP multipliers                               |
 //+------------------------------------------------------------------+
 #property copyright "XAUUSD-Backtest Project"
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 
 #include <Trade\Trade.mqh>
 
-//--- Input parameters
-input double InpRiskUSD       = 100.0;   // Fixed risk per trade (USD)
+//--- Risk sizing
+input bool   InpUseRiskPercent = false;  // true = risk % of balance | false = fixed USD
+input double InpRiskPercent    = 1.0;    // Risk % of account balance (if UseRiskPercent=true)
+input double InpRiskUSD        = 100.0;  // Fixed risk per trade USD (if UseRiskPercent=false)
 input int    InpATRPeriod     = 14;      // ATR period (5M chart)
 input double InpSLATRMult    = 1.5;     // SL = entry ± SLMult × ATR
 input double InpBaseRR        = 2.5;     // Base reward/risk ratio
@@ -220,11 +222,14 @@ void OnTick()
     double tp_dist = tp_mult      * atr_val;
 
     //--- Position size
+    double risk_usd = InpUseRiskPercent
+        ? AccountInfoDouble(ACCOUNT_BALANCE) * InpRiskPercent / 100.0
+        : InpRiskUSD;
     double contract_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
     if(contract_size <= 0) contract_size = 100.0;  // standard XAUUSD lot = 100 oz
     double sl_dist_usd = sl_dist * contract_size;
     if(sl_dist_usd <= 0) return;
-    double lots = NormalizeDouble(InpRiskUSD / sl_dist_usd, 2);
+    double lots = NormalizeDouble(risk_usd / sl_dist_usd, 2);
     double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
     double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
     lots = MathMax(MathMin(lots, max_lot), min_lot);

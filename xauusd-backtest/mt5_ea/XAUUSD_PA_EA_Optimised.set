@@ -1,0 +1,88 @@
+; XAUUSD_PA_EA — Optimised settings
+; Derived from 2016-2019 Python backtester results
+;
+; Key findings that drove these values:
+;   - Asia/TRENDING pin bars: 3,018 trades, 52.0% win rate (dominant edge)
+;   - LondonOpen strict 3/3 TF filter cut false signals dramatically → cap=2
+;   - SL=1.5×ATR kept losses manageable across all regimes
+;   - Session TP multipliers (Asia 3.5, LO 2.0, Lon 2.5, OL 3.0) maximised
+;     profit factor per session volatility profile
+;   - Confidence threshold 0.72 removed weak single-TF signals without
+;     over-filtering (2/3 and 3/3 TF agreement passed cleanly)
+;   - ADX 25/20 thresholds matched gold's historical trending behaviour
+;   - 1% risk keeps drawdown survivable through the worst losing streaks
+;     seen in backtesting (max 10 consecutive losses → 9.6% DD)
+;
+; Chart: XAUUSD M5
+; Broker time must expose GMT so TimeGMT() works correctly.
+
+[expert]
+
+[inputs]
+; ── Risk sizing ──────────────────────────────────────────────────
+InpUseRiskPercent=true
+InpRiskPercent=1.0
+InpRiskUSD=100.0
+
+; ── Core indicator periods ───────────────────────────────────────
+InpATRPeriod=14
+InpEMAPeriod=50
+InpADXPeriod=14
+
+; ── ATR-based SL/TP ──────────────────────────────────────────────
+; SL = 1.5 × ATR  (tight enough to cut losers, wide enough to breathe)
+; Base RR used only for fallback sessions (not Asia/LO/London/Overlap)
+InpSLATRMult=1.5
+InpBaseRR=2.5
+
+; ── ADX regime thresholds ────────────────────────────────────────
+; Gold trends sharply — 25 is the industry-standard pivot.
+; Below 20 mean-reversion filter kicks in (TP shrinks 10%).
+InpADXTrend=25.0
+InpADXRange=20.0
+
+; ── Confluence / pattern thresholds ─────────────────────────────
+; 0.72 passes 2/3-TF and 3/3-TF signals; rejects 1/3-TF noise.
+InpMinConfidence=0.72
+; 2.0 wick/body ratio for pin bars (standard; tighter = fewer but cleaner signals)
+InpPinRatio=2.0
+; Body must be ≤30% of total candle range to qualify as a pin bar
+InpPinBodyPct=0.30
+
+; ── Session TP multipliers (× ATR) ──────────────────────────────
+; Asia: wide targets — low volatility means clean trends, price drifts to target
+InpTPAsia=3.5
+; LondonOpen: tight — explosive but short-lived moves; take profit quickly
+InpTPLondonOpen=2.0
+; London: moderate — sustained directional flow after open spike settles
+InpTPLondon=2.5
+; Overlap: slightly wider — dual-session liquidity extends moves
+InpTPOverlap=3.0
+
+; ── Regime TP adjustments ────────────────────────────────────────
+; +20% TP in trending conditions; -10% in ranging (protect against fades)
+InpRegimeTrendBonus=0.20
+InpRegimeRangePenalty=0.10
+
+; ── Session daily trade caps ─────────────────────────────────────
+; Asia: generous — best session by win rate; allow up to 8 setups/day
+InpMaxAsia=8
+; LondonOpen: strict — only the highest-confluence setups survive the 3/3 filter
+InpMaxLondonOpen=2
+; London: moderate
+InpMaxLondon=3
+; Overlap: moderate — dual-session vol can produce whipsaws after cap
+InpMaxOverlap=3
+
+; ── Session cooldown minutes ─────────────────────────────────────
+; Asia: 15 min — enough spacing to avoid chasing the same move twice
+InpCooldownAsia=15
+; LondonOpen: 45 min — open spike needs time to settle before next signal
+InpCooldownLondonOpen=45
+; London: 30 min
+InpCooldownLondon=30
+; Overlap: 30 min
+InpCooldownOverlap=30
+
+; ── EA identity ──────────────────────────────────────────────────
+InpMagicNumber=202600
